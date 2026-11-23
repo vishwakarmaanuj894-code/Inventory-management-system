@@ -1,0 +1,136 @@
+/* ==========================================================================
+   SMART INVENTORY MANAGEMENT SYSTEM - RESPONSIVE STYLES
+   Breakpoints: 1200px, 1024px, 768px, 480px
+   ========================================================================== */
+
+/* Large Tablets & Small Laptops */
+@media (max-width: 1200px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Tablets & Mobile Screens */
+@media (max-width: 1024px) {
+  :root {
+    --sidebar-width: 250px;
+  }
+
+  .sidebar {
+    transform: translateX(-100%);
+    box-shadow: var(--shadow-xl);
+  }
+
+  .sidebar.show {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background-color: rgba(15, 23, 42, 0.5);
+    backdrop-filter: blur(2px);
+    z-index: 95;
+  }
+
+  .sidebar-backdrop.show {
+    display: block;
+  }
+
+  .main-wrapper {
+    margin-left: 0;
+  }
+
+  .sidebar-toggle-btn {
+    display: flex;
+  }
+
+  .topbar {
+    padding: 0 16px;
+  }
+
+  .topbar-search {
+    width: 200px;
+  }
+
+  .content-area {
+    padding: 16px 16px 36px;
+  }
+}
+
+/* Mobile Screens */
+@media (max-width: 768px) {
+  .topbar-search {
+    display: none;
+  }
+
+  .metrics-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .page-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .data-card-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .table-filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .search-input-wrapper {
+    width: 100%;
+  }
+
+  .segmented-tabs {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .modal-container {
+    max-height: 95vh;
+  }
+
+  .invoice-bill-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .form-row {
+    flex-direction: column !important;
+  }
+}
+
+/* Extra Small Mobiles */
+@media (max-width: 480px) {
+  .btn {
+    padding: 8px 12px;
+    font-size: 12.5px;
+  }
+
+  .metric-value {
+    font-size: 20px;
+  }
+
+  .modal-header,
+  .modal-body,
+  .modal-footer {
+    padding: 14px;
+  }
+
+  .printable-invoice {
+    padding: 16px;
+  }
+}

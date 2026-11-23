@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login - Smart Inventory Management System</title>
+  <meta name="description" content="Sign in to your Smart Inventory Management System dashboard." />
+  <link rel="stylesheet" href="/css/style.css" />
+  <style>
+    .auth-page {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #f8fafc 0%, #edf2f7 100%);
+      padding: 24px;
+    }
+
+    .auth-card {
+      background-color: #ffffff;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-xl);
+      width: 100%;
+      max-width: 440px;
+      overflow: hidden;
+    }
+
+    .auth-header {
+      padding: 36px 32px 24px;
+      text-align: center;
+    }
+
+    .auth-logo {
+      width: 52px;
+      height: 52px;
+      border-radius: var(--radius-lg);
+      background: linear-gradient(135deg, #6c4cf1, #3978f6);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 16px rgba(108, 76, 241, 0.25);
+    }
+
+    .auth-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    .auth-subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .auth-body {
+      padding: 0 32px 32px;
+    }
+
+    .demo-box {
+      background-color: var(--color-primary-light);
+      border: 1px solid var(--color-primary-border);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      font-size: 12.5px;
+      color: var(--text-secondary);
+    }
+  </style>
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <div class="auth-header">
+      <div class="auth-logo">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      </div>
+      <h1 class="auth-title">Welcome Back</h1>
+      <p class="auth-subtitle">Sign in to your Smart Inventory Portal</p>
+    </div>
+
+    <div class="auth-body">
+      <!-- 1-Click Demo Login Box -->
+      <div class="demo-box">
+        <div style="font-weight: 600; color: var(--color-primary); margin-bottom: 4px;">⚡ Demo Credentials</div>
+        <div style="font-family: monospace;">Email: admin@smartinventory.in</div>
+        <div style="font-family: monospace;">Password: admin123</div>
+        <button type="button" class="btn btn-outline btn-sm" style="width: 100%; margin-top: 8px; border-color: var(--color-primary-border); color: var(--color-primary);" onclick="fillDemoCredentials()">
+          Auto-Fill Demo Credentials
+        </button>
+      </div>
+
+      <form id="login-form" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label class="form-label required">Email Address</label>
+          <input type="email" id="email" class="form-control" required placeholder="admin@smartinventory.in" value="admin@smartinventory.in" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label required">Password</label>
+          <input type="password" id="password" class="form-control" required placeholder="••••••••" value="admin123" />
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; font-size: 12.5px;">
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input type="checkbox" checked />
+            <span class="text-secondary">Keep me signed in</span>
+          </label>
+          <a href="javascript:void(0)" onclick="alert('For demo environment, use admin@smartinventory.in / admin123')" style="color: var(--color-primary); font-weight: 500;">Forgot Password?</a>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg" style="width: 100%;">
+          Sign In to Portal
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script src="/js/storage.js"></script>
+  <script src="/js/api.js"></script>
+  <script>
+    function fillDemoCredentials() {
+      document.getElementById('email').value = 'admin@smartinventory.in';
+      document.getElementById('password').value = 'admin123';
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const btn = e.target.querySelector('button[type="submit"]');
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value.trim();
+
+      const origText = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = `<span class="loading-spinner" style="width: 16px; height: 16px; border-width: 2px;"></span> Authenticating...`;
+
+      try {
+        const res = await api.auth.login(email, password);
+        if (res.success) {
+          btn.innerHTML = `✓ Signed In! Redirecting...`;
+          setTimeout(() => {
+            window.location.href = 'index.html';
+          }, 300);
+        } else {
+          btn.disabled = false;
+          btn.innerHTML = origText;
+          alert(res.error || "Invalid login credentials. Please use admin@smartinventory.in");
+        }
+      } catch (err) {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+        alert("Authentication failed: " + err.message);
+      }
+    }
+  </script>
+</body>
+</html>

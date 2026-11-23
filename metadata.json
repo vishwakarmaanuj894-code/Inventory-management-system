@@ -1,0 +1,7 @@
+{
+  "name": "Smart Inventory Management System",
+  "description": "Enterprise SaaS Smart Inventory Management System for managing products, categories, suppliers, purchases, sales, and stock tracking with INR currency and GST invoicing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
