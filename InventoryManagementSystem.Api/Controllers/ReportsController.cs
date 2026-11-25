@@ -1,11 +1,13 @@
 using InventoryManagementSystem.Api.DTOs;
 using InventoryManagementSystem.Api.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace InventoryManagementSystem.Api.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class ReportsController : ControllerBase
     {
         private readonly IReportService _reportService;
@@ -37,8 +39,14 @@ namespace InventoryManagementSystem.Api.Controllers
         /// </summary>
         [HttpGet("sales")]
         [ProducesResponseType(typeof(ApiResponse<List<SaleResponseDto>>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<List<SaleResponseDto>>), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> GetSales([FromQuery] ReportFilterDto filter)
         {
+            if (filter.StartDate.HasValue && filter.EndDate.HasValue && filter.StartDate > filter.EndDate)
+            {
+                return BadRequest(ApiResponse<List<SaleResponseDto>>.Fail("StartDate cannot be greater than EndDate."));
+            }
+
             var summary = await _reportService.GetReportSummaryAsync(filter);
             return Ok(ApiResponse<List<SaleResponseDto>>.Ok(summary.Data!.Sales));
         }
@@ -48,8 +56,14 @@ namespace InventoryManagementSystem.Api.Controllers
         /// </summary>
         [HttpGet("purchases")]
         [ProducesResponseType(typeof(ApiResponse<List<PurchaseResponseDto>>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<List<PurchaseResponseDto>>), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> GetPurchases([FromQuery] ReportFilterDto filter)
         {
+            if (filter.StartDate.HasValue && filter.EndDate.HasValue && filter.StartDate > filter.EndDate)
+            {
+                return BadRequest(ApiResponse<List<PurchaseResponseDto>>.Fail("StartDate cannot be greater than EndDate."));
+            }
+
             var summary = await _reportService.GetReportSummaryAsync(filter);
             return Ok(ApiResponse<List<PurchaseResponseDto>>.Ok(summary.Data!.Purchases));
         }
@@ -70,8 +84,14 @@ namespace InventoryManagementSystem.Api.Controllers
         /// </summary>
         [HttpGet("profit")]
         [ProducesResponseType(typeof(ApiResponse<ProfitReportDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<ProfitReportDto>), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> GetProfit([FromQuery] ReportFilterDto filter)
         {
+            if (filter.StartDate.HasValue && filter.EndDate.HasValue && filter.StartDate > filter.EndDate)
+            {
+                return BadRequest(ApiResponse<ProfitReportDto>.Fail("StartDate cannot be greater than EndDate."));
+            }
+
             var summary = await _reportService.GetReportSummaryAsync(filter);
             return Ok(ApiResponse<ProfitReportDto>.Ok(summary.Data!.ProfitSummary));
         }

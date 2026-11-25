@@ -5,6 +5,8 @@
  */
 
 const CategoriesModule = {
+  categoriesList: [],
+
   async init() {
     await this.render();
   },
@@ -13,26 +15,47 @@ const CategoriesModule = {
     const container = document.getElementById('module-categories');
     if (!container) return;
 
-    const res = await api.categories.getAll();
-    const categories = res.data || [];
+    App.renderLoading(container, 'Loading product categories...');
 
-    container.innerHTML = `
-      <div class="page-header">
-        <div>
-          <h1 class="page-title">Category Management</h1>
-          <p class="page-subtitle">Organize and group items into taxonomy categories with live product count tracking.</p>
-        </div>
-        <div class="page-actions">
-          <button class="btn btn-primary" onclick="CategoriesModule.openModal()">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            + Add New Category
-          </button>
-        </div>
-      </div>
+    try {
+      const res = await api.categories.getAll();
+      if (!res || res.success === false) {
+        App.renderError(container, {
+          title: 'Failed to Load Categories',
+          message: res?.error || 'Could not retrieve categories from the API.',
+          retryAction: 'CategoriesModule.render()'
+        });
+        return;
+      }
 
-      <!-- Categories Grid Cards -->
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-bottom: 24px;">
-        ${categories.map(c => `
+      const categories = res.data || [];
+      this.categoriesList = categories;
+
+      container.innerHTML = `
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Category Management</h1>
+            <p class="page-subtitle">Organize and group items into taxonomy categories with live product count tracking.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-primary" onclick="CategoriesModule.openModal()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              + Add New Category
+            </button>
+          </div>
+        </div>
+
+        <!-- Categories Grid Cards -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-bottom: 24px;">
+          ${categories.length === 0 ? `
+            <div class="data-card" style="grid-column: 1 / -1; margin-bottom: 0;">
+              <div class="empty-state">
+                <h3 class="empty-state-title">No categories found</h3>
+                <p class="empty-state-desc">Create your first product category to organize inventory items.</p>
+                <button class="btn btn-primary btn-sm" onclick="CategoriesModule.openModal()">+ Add First Category</button>
+              </div>
+            </div>
+          ` : categories.map(c => `
           <div class="data-card" style="margin-bottom: 0; padding: 20px; display: flex; flex-direction: column; justify-content: space-between;">
             <div>
               <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px;">
@@ -41,21 +64,21 @@ const CategoriesModule = {
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
                   </div>
                   <div>
-                    <h3 style="font-size: 15px; font-weight: 700; color: var(--text-primary); margin-bottom: 2px;">${c.name}</h3>
-                    <span class="sku-code">${c.code || 'CAT'}</span>
+                    <h3 style="font-size: 15px; font-weight: 700; color: var(--text-primary); margin-bottom: 2px;">${escapeHtml(c.name)}</h3>
+                    <span class="sku-code">${escapeHtml(c.code || 'CAT')}</span>
                   </div>
                 </div>
                 <div class="table-actions">
-                  <button class="action-btn" title="Edit Category" onclick="CategoriesModule.openModal('${c._id}')">
+                  <button class="action-btn" title="Edit Category" onclick="CategoriesModule.openModal('${escapeHtml(c._id)}')">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                   </button>
-                  <button class="action-btn delete-btn" title="Delete Category" onclick="CategoriesModule.confirmDelete('${c._id}', '${c.name.replace(/'/g, "\\'")}', ${c.productCount})">
+                  <button class="action-btn delete-btn" title="Delete Category" onclick="CategoriesModule.confirmDelete('${escapeHtml(c._id)}')">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                   </button>
                 </div>
               </div>
               <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px;">
-                ${c.description || 'No description provided.'}
+                ${escapeHtml(c.description || 'No description provided.')}
               </p>
             </div>
 
@@ -88,14 +111,18 @@ const CategoriesModule = {
               </tr>
             </thead>
             <tbody>
-              ${categories.map(c => `
+              ${categories.length === 0 ? `
                 <tr>
-                  <td style="font-weight: 600;">${c.name}</td>
-                  <td class="sku-code">${c.code || '-'}</td>
-                  <td style="color: var(--text-secondary); max-width: 320px;">${c.description || '-'}</td>
-                  <td class="text-center font-mono font-bold">${c.productCount}</td>
+                  <td colspan="6" class="text-center" style="padding: 24px; color: var(--text-muted);">No categories registered yet.</td>
+                </tr>
+              ` : categories.map(c => `
+                <tr>
+                  <td style="font-weight: 600;">${escapeHtml(c.name)}</td>
+                  <td class="sku-code">${escapeHtml(c.code || '-')}</td>
+                  <td style="color: var(--text-secondary); max-width: 320px;">${escapeHtml(c.description || '-')}</td>
+                  <td class="text-center font-mono font-bold">${c.productCount || 0}</td>
                   <td class="text-center">
-                    ${c.productCount > 0 ? `
+                    ${(c.productCount || 0) > 0 ? `
                       <span class="badge badge-warning" title="Contains active products; cannot delete">Protected (${c.productCount})</span>
                     ` : `
                       <span class="badge badge-success">Safe to Delete</span>
@@ -103,10 +130,10 @@ const CategoriesModule = {
                   </td>
                   <td class="text-right">
                     <div class="table-actions">
-                      <button class="action-btn" title="Edit" onclick="CategoriesModule.openModal('${c._id}')">
+                      <button class="action-btn" title="Edit" onclick="CategoriesModule.openModal('${escapeHtml(c._id)}')">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                       </button>
-                      <button class="action-btn delete-btn" title="Delete" onclick="CategoriesModule.confirmDelete('${c._id}', '${c.name.replace(/'/g, "\\'")}', ${c.productCount})">
+                      <button class="action-btn delete-btn" title="Delete" onclick="CategoriesModule.confirmDelete('${escapeHtml(c._id)}')">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                       </button>
                     </div>
@@ -120,6 +147,14 @@ const CategoriesModule = {
 
       <div id="category-modal-root"></div>
     `;
+    } catch (err) {
+      console.error('Categories render error:', err);
+      App.renderError(container, {
+        title: 'Categories Page Error',
+        message: err?.message || 'Unexpected error rendering categories.',
+        retryAction: 'CategoriesModule.render()'
+      });
+    }
   },
 
   async openModal(categoryId = null) {
@@ -142,24 +177,24 @@ const CategoriesModule = {
         <div class="modal-container">
           <div class="modal-header">
             <h3 class="modal-title">${isEdit ? 'Edit Category' : 'Create Category'}</h3>
-            <button class="btn btn-ghost btn-icon-only" onclick="CategoriesModule.closeModal()">✕</button>
+            <button type="button" class="btn btn-ghost btn-icon-only" onclick="CategoriesModule.closeModal()">✕</button>
           </div>
-          <form onsubmit="CategoriesModule.saveCategory(event, '${categoryId || ''}')">
+          <form onsubmit="CategoriesModule.saveCategory(event, '${escapeHtml(categoryId || '')}')">
             <div class="modal-body">
               <div class="form-group">
                 <label class="form-label required">Category Name</label>
-                <input type="text" name="name" class="form-control" required value="${category.name}" placeholder="e.g. Industrial Automation & Cables" />
+                <input type="text" name="name" class="form-control" required value="${escapeHtml(category.name)}" placeholder="e.g. Industrial Automation & Cables" />
               </div>
 
               <div class="form-group">
                 <label class="form-label required">Short Code</label>
-                <input type="text" name="code" class="form-control sku-code" required value="${category.code}" placeholder="e.g. IND-AUTO" />
+                <input type="text" name="code" class="form-control sku-code" required value="${escapeHtml(category.code)}" placeholder="e.g. IND-AUTO" />
                 <div class="input-helper">Prefix used for SKU generation and warehouse shelf labels</div>
               </div>
 
               <div class="form-group" style="margin-bottom: 0;">
                 <label class="form-label">Category Description</label>
-                <textarea name="description" class="form-control" rows="3" placeholder="Describe the types of inventory items belonging to this category...">${category.description || ''}</textarea>
+                <textarea name="description" class="form-control" rows="3" placeholder="Describe the types of inventory items belonging to this category...">${escapeHtml(category.description || '')}</textarea>
               </div>
             </div>
             <div class="modal-footer">
@@ -181,39 +216,64 @@ const CategoriesModule = {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
+    const submitBtn = form.querySelector('button[type="submit"]');
 
     const payload = {
-      name: formData.get('name').trim(),
-      code: formData.get('code').trim().toUpperCase(),
-      description: formData.get('description').trim()
+      name: (formData.get('name') || '').trim(),
+      code: (formData.get('code') || '').trim().toUpperCase(),
+      description: (formData.get('description') || '').trim()
     };
 
-    let result;
-    if (categoryId) {
-      result = await api.categories.update(categoryId, payload);
-    } else {
-      result = await api.categories.create(payload);
+    if (!payload.name || !payload.code) {
+      App.showToast('Category name and code are required.', 'warning');
+      return;
     }
 
-    if (result.success) {
-      App.showToast(categoryId ? 'Category updated successfully!' : 'New category created successfully!', 'success');
-      this.closeModal();
-      await this.render();
-      DashboardModule.render();
-      ProductsModule.render();
-    } else {
-      App.showToast(result.error || 'Failed to save category', 'error');
+    const origText = submitBtn ? submitBtn.innerHTML : '';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Saving...';
+    }
+
+    try {
+      const result = categoryId
+        ? await api.categories.update(categoryId, payload)
+        : await api.categories.create(payload);
+
+      if (result.success) {
+        App.showToast(categoryId ? 'Category updated successfully!' : 'New category created successfully!', 'success');
+        this.closeModal();
+        await this.render();
+        DashboardModule.render();
+        ProductsModule.render();
+      } else {
+        App.showToast(result.error || 'Failed to save category', 'error');
+      }
+    } finally {
+      if (submitBtn && document.body.contains(submitBtn)) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = origText;
+      }
     }
   },
 
-  async confirmDelete(categoryId, categoryName, productCount) {
-    // Check if products assigned
+  async confirmDelete(categoryId) {
+    const category = this.categoriesList.find(c => c._id === categoryId);
+    const categoryName = category ? category.name : 'this category';
+    const productCount = category ? (category.productCount || 0) : 0;
+
     if (productCount > 0) {
       App.showToast(`Cannot delete '${categoryName}' because ${productCount} product(s) are assigned to it. Reassign or delete those products first.`, 'error');
       return;
     }
 
-    if (confirm(`Are you sure you want to delete category '${categoryName}'?`)) {
+    const confirmed = await App.confirmAction({
+      title: 'Delete Category',
+      message: `Are you sure you want to delete category '${categoryName}'?`,
+      confirmLabel: 'Delete Category',
+      danger: true
+    });
+    if (confirmed) {
       const res = await api.categories.delete(categoryId);
       if (res.success) {
         App.showToast('Category deleted successfully', 'success');

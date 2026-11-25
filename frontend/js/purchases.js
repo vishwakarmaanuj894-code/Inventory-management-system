@@ -15,19 +15,31 @@ const PurchasesModule = {
     const container = document.getElementById('module-purchases');
     if (!container) return;
 
-    const [purchasesRes, suppliersRes, productsRes] = await Promise.all([
-      api.purchases.getAll(),
-      api.suppliers.getAll(),
-      api.products.getAll()
-    ]);
+    App.renderLoading(container, 'Loading purchase invoices...');
 
-    const purchases = purchasesRes.data || [];
-    this.suppliers = suppliersRes.data || [];
-    this.products = productsRes.data || [];
+    try {
+      const [purchasesRes, suppliersRes, productsRes] = await Promise.all([
+        api.purchases.getAll(),
+        api.suppliers.getAll(),
+        api.products.getAll()
+      ]);
 
-    const totalSpent = purchases.reduce((sum, p) => sum + (p.grandTotal || 0), 0);
+      if (!purchasesRes || purchasesRes.success === false) {
+        App.renderError(container, {
+          title: 'Failed to Load Purchases',
+          message: purchasesRes?.error || 'Could not retrieve purchase invoices from the API.',
+          retryAction: 'PurchasesModule.render()'
+        });
+        return;
+      }
 
-    container.innerHTML = `
+      const purchases = purchasesRes.data || [];
+      this.suppliers = suppliersRes.data || [];
+      this.products = productsRes.data || [];
+
+      const totalSpent = purchases.reduce((sum, p) => sum + (p.grandTotal || 0), 0);
+
+      container.innerHTML = `
       <div class="page-header">
         <div>
           <h1 class="page-title">Purchase Management & Inward Supply</h1>
@@ -90,21 +102,21 @@ const PurchasesModule = {
                 </tr>
               ` : purchases.map(p => `
                 <tr>
-                  <td class="font-mono font-bold" style="color: var(--color-primary);">${p.invoiceNumber}</td>
+                  <td class="font-mono font-bold" style="color: var(--color-primary);">${escapeHtml(p.invoiceNumber)}</td>
                   <td>
-                    <div style="font-weight: 600;">${p.supplierName}</div>
+                    <div style="font-weight: 600;">${escapeHtml(p.supplierName)}</div>
                   </td>
                   <td class="font-mono text-muted" style="font-size: 12px;">${formatDate(p.createdAt)}</td>
                   <td class="text-center font-mono">
-                    <span class="badge badge-purple">${p.items.length} items</span>
+                    <span class="badge badge-purple">${(p.items || []).length} items</span>
                   </td>
-                  <td>${p.paymentMethod || 'Bank Transfer'}</td>
+                  <td>${escapeHtml(p.paymentMethod || 'Bank Transfer')}</td>
                   <td class="text-right font-mono font-bold">${formatINR(p.grandTotal)}</td>
                   <td class="text-center">
-                    <span class="badge badge-success">✓ ${p.status || 'Completed'}</span>
+                    <span class="badge badge-success">✓ ${escapeHtml(p.status || 'Completed')}</span>
                   </td>
                   <td class="text-right">
-                    <button class="btn btn-outline btn-sm" onclick="PurchasesModule.viewInvoice('${p._id}')">
+                    <button class="btn btn-outline btn-sm" onclick="PurchasesModule.viewInvoice('${escapeHtml(p._id)}')">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                       View Invoice
                     </button>
@@ -118,6 +130,14 @@ const PurchasesModule = {
 
       <div id="purchase-modal-root"></div>
     `;
+    } catch (err) {
+      console.error('Purchases render error:', err);
+      App.renderError(container, {
+        title: 'Purchases Page Error',
+        message: err?.message || 'Unexpected error rendering purchase management.',
+        retryAction: 'PurchasesModule.render()'
+      });
+    }
   },
 
   openNewPurchaseModal(preselectedProductId = null) {
@@ -159,19 +179,19 @@ const PurchasesModule = {
               <h3 class="modal-title">Create Purchase Invoice</h3>
               <div style="font-size: 12px; color: var(--text-muted);">Stock quantities will automatically increase upon saving</div>
             </div>
-            <button class="btn btn-ghost btn-icon-only" onclick="PurchasesModule.closeModal()">✕</button>
+            <button type="button" class="btn btn-ghost btn-icon-only" onclick="PurchasesModule.closeModal()">✕</button>
           </div>
           <form id="purchase-form" onsubmit="PurchasesModule.savePurchase(event)">
             <div class="modal-body">
               <div class="form-row" style="display: flex; gap: 16px; margin-bottom: 12px;">
                 <div class="form-group" style="flex: 1;">
                   <label class="form-label required">Invoice Reference #</label>
-                  <input type="text" name="invoiceNumber" class="form-control font-mono" required value="${invoiceNumber}" />
+                  <input type="text" name="invoiceNumber" class="form-control font-mono" required value="${escapeHtml(invoiceNumber)}" />
                 </div>
                 <div class="form-group" style="flex: 1.5;">
                   <label class="form-label required">Supplier / Vendor</label>
                   <select name="supplierId" class="form-control" required id="purchase-supplier-select">
-                    ${this.suppliers.map(s => `<option value="${s._id}">${s.company} (${s.name}) - ${s.city}</option>`).join('')}
+                    ${this.suppliers.map(s => `<option value="${escapeHtml(s._id)}">${escapeHtml(s.company)} (${escapeHtml(s.name)}) - ${escapeHtml(s.city)}</option>`).join('')}
                   </select>
                 </div>
                 <div class="form-group" style="flex: 1;">
@@ -260,12 +280,12 @@ const PurchasesModule = {
     if (!tbody) return;
 
     tbody.innerHTML = this.activeInvoiceItems.map((item, index) => `
-      <tr>
+      <tr id="purchase-item-row-${index}">
         <td>
           <select class="form-control" onchange="PurchasesModule.handleProductSelect(${index}, this.value)">
             ${this.products.map(p => `
-              <option value="${p._id}" ${item.productId === p._id ? 'selected' : ''}>
-                ${p.name} (SKU: ${p.sku})
+              <option value="${escapeHtml(p._id)}" ${item.productId === p._id ? 'selected' : ''}>
+                ${escapeHtml(p.name)} (SKU: ${escapeHtml(p.sku)})
               </option>
             `).join('')}
           </select>
@@ -274,9 +294,9 @@ const PurchasesModule = {
           <input type="number" min="1" class="form-control font-mono text-center" value="${item.quantity}" oninput="PurchasesModule.handleQuantityChange(${index}, this.value)" />
         </td>
         <td>
-          <input type="number" min="0" step="any" class="form-control font-mono text-right" value="${item.purchasePrice}" oninput="PurchasesModule.handlePriceChange(${index}, this.value)" />
+          <input type="number" min="0.01" step="any" class="form-control font-mono text-right" value="${item.purchasePrice}" oninput="PurchasesModule.handlePriceChange(${index}, this.value)" />
         </td>
-        <td class="text-right font-mono font-bold" style="padding-right: 12px;">
+        <td id="purchase-item-total-${index}" class="text-right font-mono font-bold" style="padding-right: 12px;">
           ${formatINR(item.total)}
         </td>
         <td class="text-center">
@@ -326,25 +346,37 @@ const PurchasesModule = {
   },
 
   handleQuantityChange(index, qty) {
-    const q = Math.max(1, parseInt(qty, 10) || 1);
+    const parsed = parseInt(qty, 10);
+    const q = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
     this.activeInvoiceItems[index].quantity = q;
     this.activeInvoiceItems[index].total = this.activeInvoiceItems[index].purchasePrice * q;
-    this.renderItemsTable();
+    const totalEl = document.getElementById(`purchase-item-total-${index}`);
+    if (totalEl) {
+      totalEl.textContent = formatINR(this.activeInvoiceItems[index].total);
+    } else {
+      this.renderItemsTable();
+    }
     this.recalculateTotals();
   },
 
   handlePriceChange(index, price) {
-    const p = Math.max(0, parseFloat(price) || 0);
+    const parsed = parseFloat(price);
+    const p = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
     this.activeInvoiceItems[index].purchasePrice = p;
     this.activeInvoiceItems[index].total = p * this.activeInvoiceItems[index].quantity;
-    this.renderItemsTable();
+    const totalEl = document.getElementById(`purchase-item-total-${index}`);
+    if (totalEl) {
+      totalEl.textContent = formatINR(this.activeInvoiceItems[index].total);
+    } else {
+      this.renderItemsTable();
+    }
     this.recalculateTotals();
   },
 
   recalculateTotals() {
     const subtotal = this.activeInvoiceItems.reduce((sum, item) => sum + item.total, 0);
-    const taxRate = parseFloat(document.getElementById('purchase-tax-rate')?.value) || 0;
-    const discount = parseFloat(document.getElementById('purchase-discount')?.value) || 0;
+    const taxRate = Math.max(0, Math.min(100, parseFloat(document.getElementById('purchase-tax-rate')?.value) || 0));
+    const discount = Math.max(0, parseFloat(document.getElementById('purchase-discount')?.value) || 0);
 
     const taxAmount = (subtotal * taxRate) / 100;
     const grandTotal = Math.max(0, subtotal + taxAmount - discount);
@@ -369,12 +401,35 @@ const PurchasesModule = {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
+    const submitBtn = form.querySelector('button[type="submit"]');
+
+    const invoiceNumber = (formData.get('invoiceNumber') || '').trim();
+    if (!invoiceNumber) {
+      App.showToast('Invoice reference number is required.', 'warning');
+      return;
+    }
+
+    for (const item of this.activeInvoiceItems) {
+      if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+        App.showToast(`Quantity must be at least 1 for '${item.productName}'.`, 'warning');
+        return;
+      }
+      if (!Number.isFinite(item.purchasePrice) || item.purchasePrice <= 0) {
+        App.showToast(`Unit cost must be greater than zero for '${item.productName}'.`, 'warning');
+        return;
+      }
+    }
+
+    if (this.calculated.discount > this.calculated.subtotal + this.calculated.taxAmount) {
+      App.showToast('Discount cannot exceed subtotal plus GST tax amount.', 'warning');
+      return;
+    }
 
     const supplierId = formData.get('supplierId');
     const selectedSupplier = this.suppliers.find(s => s._id === supplierId);
 
     const payload = {
-      invoiceNumber: formData.get('invoiceNumber').trim(),
+      invoiceNumber,
       supplierId: supplierId,
       supplierName: selectedSupplier ? (selectedSupplier.company || selectedSupplier.name) : 'Supplier',
       paymentMethod: formData.get('paymentMethod'),
@@ -384,20 +439,33 @@ const PurchasesModule = {
       taxAmount: this.calculated.taxAmount,
       discount: this.calculated.discount,
       grandTotal: this.calculated.grandTotal,
-      notes: formData.get('notes'),
+      notes: (formData.get('notes') || '').trim(),
       status: 'Completed'
     };
 
-    const res = await api.purchases.create(payload);
-    if (res.success) {
-      App.showToast("Purchase recorded successfully! Product stock has been increased.", "success");
-      this.closeModal();
-      await this.render();
-      DashboardModule.render();
-      ProductsModule.render();
-      InventoryModule.render();
-    } else {
-      App.showToast(res.error || "Failed to create purchase", "error");
+    const origText = submitBtn ? submitBtn.innerHTML : '';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Saving...';
+    }
+
+    try {
+      const res = await api.purchases.create(payload);
+      if (res.success) {
+        App.showToast("Purchase recorded successfully! Product stock has been increased.", "success");
+        this.closeModal();
+        await this.render();
+        DashboardModule.render();
+        ProductsModule.render();
+        InventoryModule.render();
+      } else {
+        App.showToast(res.error || "Failed to create purchase", "error");
+      }
+    } finally {
+      if (submitBtn && document.body.contains(submitBtn)) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = origText;
+      }
     }
   },
 
@@ -417,13 +485,13 @@ const PurchasesModule = {
       <div class="modal-overlay active" id="purchase-modal">
         <div class="modal-container modal-xl">
           <div class="modal-header no-print">
-            <h3 class="modal-title">Tax Invoice Preview: ${p.invoiceNumber}</h3>
+            <h3 class="modal-title">Tax Invoice Preview: ${escapeHtml(p.invoiceNumber)}</h3>
             <div style="display: flex; gap: 8px;">
-              <button class="btn btn-primary btn-sm" onclick="window.print()">
+              <button type="button" class="btn btn-primary btn-sm" onclick="window.print()">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
                 Print Invoice
               </button>
-              <button class="btn btn-ghost btn-icon-only" onclick="PurchasesModule.closeModal()">✕</button>
+              <button type="button" class="btn btn-ghost btn-icon-only" onclick="PurchasesModule.closeModal()">✕</button>
             </div>
           </div>
           <div class="modal-body" style="background-color: var(--bg-surface-subtle); padding: 24px;">
@@ -434,32 +502,32 @@ const PurchasesModule = {
                   <div style="font-size: 13px; color: #64748B;">Official Warehouse Goods Receipt Note (GRN)</div>
                 </div>
                 <div style="text-align: right;">
-                  <div class="font-mono" style="font-size: 18px; font-weight: 700; color: #0F172A;">${p.invoiceNumber}</div>
+                  <div class="font-mono" style="font-size: 18px; font-weight: 700; color: #0F172A;">${escapeHtml(p.invoiceNumber)}</div>
                   <div style="font-size: 13px; color: #64748B;">Date: ${formatDate(p.createdAt)}</div>
-                  <div style="font-size: 13px; color: #64748B;">Status: <strong>${p.status}</strong></div>
+                  <div style="font-size: 13px; color: #64748B;">Status: <strong>${escapeHtml(p.status)}</strong></div>
                 </div>
               </div>
 
               <div class="invoice-bill-grid">
                 <div class="invoice-party-box">
                   <div class="invoice-party-title">Supplier (Vendor / Consignor)</div>
-                  <strong style="font-size: 14px; color: #0F172A;">${p.supplierName}</strong>
+                  <strong style="font-size: 14px; color: #0F172A;">${escapeHtml(p.supplierName)}</strong>
                   <div style="font-size: 12.5px; color: #475569; margin-top: 4px;">
-                    ${sup.address || ''}<br/>
-                    ${sup.city || ''}, ${sup.state || ''}<br/>
-                    Phone: ${sup.phone || '-'}<br/>
-                    GSTIN: <span class="font-mono"><strong>${sup.gstin || 'Unregistered'}</strong></span>
+                    ${escapeHtml(sup.address || '')}<br/>
+                    ${escapeHtml(sup.city || '')}, ${escapeHtml(sup.state || '')}<br/>
+                    Phone: ${escapeHtml(sup.phone || '-')}<br/>
+                    GSTIN: <span class="font-mono"><strong>${escapeHtml(sup.gstin || 'Unregistered')}</strong></span>
                   </div>
                 </div>
 
                 <div class="invoice-party-box">
                   <div class="invoice-party-title">Billed & Delivered To (Consignee)</div>
-                  <strong style="font-size: 14px; color: #0F172A;">${settings.companyName || 'Bharat Logistics'}</strong>
+                  <strong style="font-size: 14px; color: #0F172A;">${escapeHtml(settings.companyName || 'Bharat Logistics')}</strong>
                   <div style="font-size: 12.5px; color: #475569; margin-top: 4px;">
-                    ${settings.address || ''}<br/>
-                    ${settings.city || ''}, ${settings.state || ''} - ${settings.pincode || ''}<br/>
-                    Phone: ${settings.phone || '-'}<br/>
-                    GSTIN: <span class="font-mono"><strong>${settings.gstin || '-'}</strong></span>
+                    ${escapeHtml(settings.address || '')}<br/>
+                    ${escapeHtml(settings.city || '')}, ${escapeHtml(settings.state || '')} - ${escapeHtml(settings.pincode || '')}<br/>
+                    Phone: ${escapeHtml(settings.phone || '-')}<br/>
+                    GSTIN: <span class="font-mono"><strong>${escapeHtml(settings.gstin || '-')}</strong></span>
                   </div>
                 </div>
               </div>
@@ -476,11 +544,11 @@ const PurchasesModule = {
                   </tr>
                 </thead>
                 <tbody>
-                  ${p.items.map((it, idx) => `
+                  ${(p.items || []).map((it, idx) => `
                     <tr>
                       <td class="font-mono text-muted">${idx + 1}</td>
-                      <td style="font-weight: 600;">${it.productName}</td>
-                      <td class="sku-code">${it.sku}</td>
+                      <td style="font-weight: 600;">${escapeHtml(it.productName)}</td>
+                      <td class="sku-code">${escapeHtml(it.sku)}</td>
                       <td class="text-center font-mono font-bold">${it.quantity}</td>
                       <td class="text-right font-mono">${formatINR(it.purchasePrice)}</td>
                       <td class="text-right font-mono font-bold">${formatINR(it.total)}</td>
@@ -492,8 +560,8 @@ const PurchasesModule = {
               <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                 <div style="max-width: 400px; font-size: 12.5px; color: #64748B;">
                   <strong>Payment & Notes:</strong><br/>
-                  Payment Method: ${p.paymentMethod || 'Bank Transfer'}<br/>
-                  ${p.notes ? `Remarks: ${p.notes}<br/>` : ''}
+                  Payment Method: ${escapeHtml(p.paymentMethod || 'Bank Transfer')}<br/>
+                  ${p.notes ? `Remarks: ${escapeHtml(p.notes)}<br/>` : ''}
                   Stock verified and credited into Smart Inventory Database.
                 </div>
 
@@ -521,8 +589,8 @@ const PurchasesModule = {
             </div>
           </div>
           <div class="modal-footer no-print">
-            <button class="btn btn-outline" onclick="PurchasesModule.closeModal()">Close</button>
-            <button class="btn btn-primary" onclick="window.print()">
+            <button type="button" class="btn btn-outline" onclick="PurchasesModule.closeModal()">Close</button>
+            <button type="button" class="btn btn-primary" onclick="window.print()">
               Print Inward Invoice
             </button>
           </div>

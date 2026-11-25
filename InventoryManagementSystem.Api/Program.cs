@@ -42,7 +42,15 @@ builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 
 // 5. Configure JWT Authentication
-var jwtSecret = builder.Configuration["JwtSettings:Secret"] ?? "SmartInventorySuperSecureKey2026PhaseTwoEnterpriseJwtTokenAuth!";
+var jwtSecret = Environment.GetEnvironmentVariable("JWT_SECRET") ?? builder.Configuration["JwtSettings:Secret"];
+if (string.IsNullOrWhiteSpace(jwtSecret) ||
+    jwtSecret.StartsWith("REPLACE_WITH_", StringComparison.OrdinalIgnoreCase) ||
+    Encoding.UTF8.GetByteCount(jwtSecret) < 32)
+{
+    throw new InvalidOperationException(
+        "JWT secret is missing, a placeholder, or shorter than 32 bytes. Set JWT_SECRET environment variable or JwtSettings:Secret via user-secrets."
+    );
+}
 var jwtIssuer = builder.Configuration["JwtSettings:Issuer"] ?? "SmartInventoryApi";
 var jwtAudience = builder.Configuration["JwtSettings:Audience"] ?? "SmartInventoryClient";
 
@@ -70,26 +78,45 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
-// 6. Configure CORS for Frontend integration
-var allowedOrigins = builder.Configuration.GetSection("CorsSettings:AllowedOrigins").Get<string[]>()
-    ?? new[] { "http://localhost:3000", "http://localhost:5173" };
+// 6. Configure CORS for Frontend integration (local + deployed origins)
+var configOrigins = builder.Configuration.GetSection("CorsSettings:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+var envOrigins = (Environment.GetEnvironmentVariable("CORS_ALLOWED_ORIGINS") ?? string.Empty)
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+var allowedOriginSet = new HashSet<string>(
+    configOrigins.Concat(envOrigins).Where(o => !string.IsNullOrWhiteSpace(o)).Select(o => o.TrimEnd('/')),
+    StringComparer.OrdinalIgnoreCase
+);
+var allowedSuffixes = builder.Configuration.GetSection("CorsSettings:AllowedOriginSuffixes").Get<string[]>()
+    ?? new[] { ".run.app", ".ai.studio" };
 
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.WithOrigins(allowedOrigins)
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials();
-    });
+        policy.SetIsOriginAllowed(origin =>
+            {
+                if (string.IsNullOrWhiteSpace(origin)) return false;
+                var normalized = origin.TrimEnd('/');
+                if (allowedOriginSet.Contains(normalized)) return true;
 
-    // Flexible fallback policy for development
-    options.AddPolicy("AllowAny", policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+                if (Uri.TryCreate(normalized, UriKind.Absolute, out var uri))
+                {
+                    if (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                        uri.Host.Equals("127.0.0.1", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                    if (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) &&
+                        allowedSuffixes.Any(s => uri.Host.EndsWith(s, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            })
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
 
@@ -141,7 +168,10 @@ using (var scope = app.Services.CreateScope())
 // 9. Middleware Pipeline
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-if (app.Environment.IsDevelopment() || true)
+var enableSwagger = app.Environment.IsDevelopment() ||
+    string.Equals(Environment.GetEnvironmentVariable("ENABLE_SWAGGER"), "true", StringComparison.OrdinalIgnoreCase);
+
+if (enableSwagger)
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
@@ -153,12 +183,19 @@ if (app.Environment.IsDevelopment() || true)
 
 app.UseRouting();
 
-// Apply CORS policy
-app.UseCors("AllowAny");
+// Apply CORS policy before Auth
+app.UseCors("AllowFrontend");
 
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Bind dynamically to PORT env var in container/cloud deployments (fallback to ASPNETCORE_URLS or 5000)
+var port = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrWhiteSpace(port))
+{
+    app.Urls.Add($"http://0.0.0.0:{port}");
+}
 
 app.Run();

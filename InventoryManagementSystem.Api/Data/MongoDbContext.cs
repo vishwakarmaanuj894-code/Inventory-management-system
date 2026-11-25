@@ -46,8 +46,15 @@ namespace InventoryManagementSystem.Api.Data
             // 1. Environment Variable MONGODB_CONNECTION_STRING (e.g. in Azure, Docker, or Cloud Run)
             // 2. Configuration section MongoDbSettings:ConnectionString (appsettings.json)
             var connectionString = Environment.GetEnvironmentVariable("MONGODB_CONNECTION_STRING")
-                                   ?? configuration["MongoDbSettings:ConnectionString"]
-                                   ?? "mongodb://localhost:27017";
+                                   ?? configuration["MongoDbSettings:ConnectionString"];
+
+            if (string.IsNullOrWhiteSpace(connectionString) ||
+                connectionString.Contains("YOUR_MONGODB_ATLAS_CONNECTION_STRING", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "MongoDB connection string is not configured. Set the MONGODB_CONNECTION_STRING environment variable or configure MongoDbSettings:ConnectionString via dotnet user-secrets."
+                );
+            }
 
             var databaseName = Environment.GetEnvironmentVariable("MONGODB_DATABASE_NAME")
                                ?? configuration["MongoDbSettings:DatabaseName"]
@@ -101,7 +108,27 @@ namespace InventoryManagementSystem.Api.Data
                 );
                 await Categories.Indexes.CreateOneAsync(categoryNameIndex);
 
-                // 4. Seed default admin user if none exists
+                // 4. Purchase & Sale Invoice Unique Indexes
+                var purchaseInvoiceIndex = new CreateIndexModel<Purchase>(
+                    Builders<Purchase>.IndexKeys.Ascending(p => p.InvoiceNumber),
+                    new CreateIndexOptions { Unique = true, Name = "idx_purchases_invoice_unique" }
+                );
+                await Purchases.Indexes.CreateOneAsync(purchaseInvoiceIndex);
+
+                var saleInvoiceIndex = new CreateIndexModel<Sale>(
+                    Builders<Sale>.IndexKeys.Ascending(s => s.InvoiceNumber),
+                    new CreateIndexOptions { Unique = true, Name = "idx_sales_invoice_unique" }
+                );
+                await Sales.Indexes.CreateOneAsync(saleInvoiceIndex);
+
+                // 5. StockTransaction Composite Index
+                var stockTxIndex = new CreateIndexModel<StockTransaction>(
+                    Builders<StockTransaction>.IndexKeys.Ascending(t => t.ProductId).Descending(t => t.Timestamp),
+                    new CreateIndexOptions { Name = "idx_stock_trans_prod_time" }
+                );
+                await StockTransactions.Indexes.CreateOneAsync(stockTxIndex);
+
+                // 6. Seed default admin user if none exists
                 var adminCount = await Users.CountDocumentsAsync(Builders<User>.Filter.Empty);
                 if (adminCount == 0)
                 {

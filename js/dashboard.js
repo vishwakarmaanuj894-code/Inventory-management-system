@@ -13,77 +13,99 @@ const DashboardModule = {
     const container = document.getElementById('module-dashboard');
     if (!container) return;
 
-    // Fetch required data from API
-    const [productsRes, categoriesRes, suppliersRes, salesRes, purchasesRes, reportRes] = await Promise.all([
-      api.products.getAll(),
-      api.categories.getAll(),
-      api.suppliers.getAll(),
-      api.sales.getAll(),
-      api.purchases.getAll(),
-      api.reports.getSummary('all')
-    ]);
+    App.renderLoading(container, 'Loading executive dashboard...');
 
-    const products = productsRes.data || [];
-    const categories = categoriesRes.data || [];
-    const suppliers = suppliersRes.data || [];
-    const sales = salesRes.data || [];
-    const purchases = purchasesRes.data || [];
-    const summary = reportRes.data || {};
+    try {
+      // Fetch required data from API
+      const [productsRes, categoriesRes, suppliersRes, salesRes, purchasesRes, reportRes, overviewRes] = await Promise.all([
+        api.products.getAll(),
+        api.categories.getAll(),
+        api.suppliers.getAll(),
+        api.sales.getAll(),
+        api.purchases.getAll(),
+        api.reports.getSummary('all'),
+        api.dashboard.getSalesOverview()
+      ]);
 
-    const totalStock = products.reduce((acc, p) => acc + (p.stockQuantity || 0), 0);
-    const lowStockCount = products.filter(p => p.status === 'low_stock' || p.status === 'out_of_stock').length;
+      const coreResponses = [productsRes, categoriesRes, suppliersRes, salesRes, purchasesRes, reportRes];
+      const failedResponses = coreResponses.filter(r => r && r.success === false);
 
-    // Build Recent Transactions (combined sales + purchases, sorted by date desc)
-    const combinedTx = [
-      ...sales.map(s => ({
-        type: 'SALE',
-        id: s._id,
-        invoiceNumber: s.invoiceNumber,
-        party: s.customerName || 'Customer',
-        amount: s.grandTotal,
-        date: s.createdAt,
-        status: s.status
-      })),
-      ...purchases.map(p => ({
-        type: 'PURCHASE',
-        id: p._id,
-        invoiceNumber: p.invoiceNumber,
-        party: p.supplierName,
-        amount: p.grandTotal,
-        date: p.createdAt,
-        status: p.status
-      }))
-    ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
+      if (failedResponses.length === coreResponses.length) {
+        App.renderError(container, {
+          title: 'Dashboard Data Unavailable',
+          message: failedResponses[0]?.error || 'Unable to fetch dashboard data from the backend API.',
+          retryAction: 'DashboardModule.render()'
+        });
+        return;
+      }
 
-    // Top Selling Products
-    const topProducts = (summary.productBreakdown || []).slice(0, 5);
+      const partialErrorBanner = failedResponses.length > 0
+        ? App.renderErrorBanner(failedResponses[0]?.error || 'Some dashboard metrics could not be loaded.', 'DashboardModule.render()')
+        : '';
 
-    // Low Stock Alert Products
-    const lowStockProducts = products
-      .filter(p => p.stockQuantity <= p.minStockLevel)
-      .slice(0, 5);
+      const products = Array.isArray(productsRes?.data) ? productsRes.data : [];
+      const categories = Array.isArray(categoriesRes?.data) ? categoriesRes.data : [];
+      const suppliers = Array.isArray(suppliersRes?.data) ? suppliersRes.data : [];
+      const sales = Array.isArray(salesRes?.data) ? salesRes.data : [];
+      const purchases = Array.isArray(purchasesRes?.data) ? purchasesRes.data : [];
+      const summary = (reportRes && reportRes.data) ? reportRes.data : {};
+      const monthlyOverview = (overviewRes && Array.isArray(overviewRes.data)) ? overviewRes.data : null;
 
-    container.innerHTML = `
-      <div class="page-header">
-        <div>
-          <h1 class="page-title">Executive Inventory Dashboard</h1>
-          <p class="page-subtitle">Real-time overview of your warehouse stock, revenue, sales, and supply chain operations.</p>
+      const totalStock = products.reduce((acc, p) => acc + (Number(p.stockQuantity) || 0), 0);
+      const lowStockCount = products.filter(p => p.status === 'low_stock' || p.status === 'out_of_stock').length;
+
+      // Build Recent Transactions (combined sales + purchases, sorted by date desc)
+      const combinedTx = [
+        ...sales.map(s => ({
+          type: 'SALE',
+          id: s._id,
+          invoiceNumber: s.invoiceNumber || '-',
+          party: s.customerName || 'Customer',
+          amount: Number(s.grandTotal) || 0,
+          date: s.createdAt,
+          status: s.status || 'Completed'
+        })),
+        ...purchases.map(p => ({
+          type: 'PURCHASE',
+          id: p._id,
+          invoiceNumber: p.invoiceNumber || '-',
+          party: p.supplierName || 'Supplier',
+          amount: Number(p.grandTotal) || 0,
+          date: p.createdAt,
+          status: p.status || 'Completed'
+        }))
+      ].sort((a, b) => (new Date(b.date || 0).getTime() || 0) - (new Date(a.date || 0).getTime() || 0)).slice(0, 5);
+
+      // Top Selling Products
+      const topProducts = (summary.productBreakdown || []).slice(0, 5);
+
+      // Low Stock Alert Products
+      const lowStockProducts = products
+        .filter(p => (Number(p.stockQuantity) || 0) <= (Number(p.minStockLevel) || 0))
+        .slice(0, 5);
+
+      container.innerHTML = `
+        ${partialErrorBanner}
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Executive Inventory Dashboard</h1>
+            <p class="page-subtitle">Real-time overview of your warehouse stock, revenue, sales, and supply chain operations.</p>
+          </div>
+          <div class="page-actions">
+            <button class="btn btn-outline btn-sm" onclick="App.navigateTo('reports')">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+              View Reports
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="PurchasesModule.openNewPurchaseModal()">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
+              + New Purchase
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="SalesModule.openNewSaleModal()">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              + Create Sale
+            </button>
+          </div>
         </div>
-        <div class="page-actions">
-          <button class="btn btn-outline btn-sm" onclick="App.navigateTo('reports')">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-            View Reports
-          </button>
-          <button class="btn btn-secondary btn-sm" onclick="PurchasesModule.openNewPurchaseModal()">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>
-            + New Purchase
-          </button>
-          <button class="btn btn-primary btn-sm" onclick="SalesModule.openNewSaleModal()">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-            + Create Sale
-          </button>
-        </div>
-      </div>
 
       <!-- KPI Metrics Cards Row 1 -->
       <div class="metrics-grid">
@@ -96,8 +118,8 @@ const DashboardModule = {
           </div>
           <div class="metric-value num-metric">${formatINR(summary.totalSalesRevenue || 0)}</div>
           <div class="metric-footer">
-            <span class="metric-change positive">↑ 14.8%</span>
-            <span>vs last billing cycle</span>
+            <span class="font-mono">${sales.length}</span>
+            <span>Sales invoices billed</span>
           </div>
         </div>
 
@@ -110,7 +132,7 @@ const DashboardModule = {
           </div>
           <div class="metric-value num-metric">${formatINR(summary.estimatedProfit || 0)}</div>
           <div class="metric-footer">
-            <span class="metric-change positive">Margin: ${summary.profitMargin || 0}%</span>
+            <span class="metric-change positive">Margin: ${escapeHtml(summary.profitMargin || 0)}%</span>
             <span>Gross margin</span>
           </div>
         </div>
@@ -180,7 +202,7 @@ const DashboardModule = {
             </div>
           </div>
           <div class="chart-container" id="sales-analytics-chart">
-            ${this.renderSalesChartSVG(sales, purchases)}
+            ${this.renderSalesChartSVG(sales, purchases, monthlyOverview)}
           </div>
         </div>
 
@@ -262,8 +284,8 @@ const DashboardModule = {
                         ${tx.type === 'SALE' ? 'Sale' : 'Purchase'}
                       </span>
                     </td>
-                    <td class="font-mono" style="font-weight: 600;">${tx.invoiceNumber}</td>
-                    <td>${tx.party}</td>
+                    <td class="font-mono" style="font-weight: 600;">${escapeHtml(tx.invoiceNumber)}</td>
+                    <td>${escapeHtml(tx.party)}</td>
                     <td class="text-muted font-mono" style="font-size: 12px;">${formatDate(tx.date)}</td>
                     <td class="text-right font-mono font-bold">${formatINR(tx.amount)}</td>
                   </tr>
@@ -298,15 +320,15 @@ const DashboardModule = {
                 ` : lowStockProducts.map(p => `
                   <tr>
                     <td>
-                      <div style="font-weight: 600; font-size: 12.5px;">${p.name}</div>
-                      <div class="sku-code">${p.sku}</div>
+                      <div style="font-weight: 600; font-size: 12.5px;">${escapeHtml(p.name)}</div>
+                      <div class="sku-code">${escapeHtml(p.sku)}</div>
                     </td>
                     <td class="text-center font-mono font-bold" style="color: ${p.stockQuantity === 0 ? 'var(--color-danger)' : 'var(--color-warning)'}">
-                      ${p.stockQuantity} ${p.unit || ''}
+                      ${p.stockQuantity} ${escapeHtml(p.unit || '')}
                     </td>
                     <td class="text-center font-mono text-muted">${p.minStockLevel}</td>
                     <td class="text-right">
-                      <button class="btn btn-outline btn-sm" onclick="PurchasesModule.openNewPurchaseModal('${p._id}')" title="Reorder product">
+                      <button class="btn btn-outline btn-sm" onclick="PurchasesModule.openNewPurchaseModal('${escapeHtml(p._id)}')" title="Reorder product">
                         + Buy
                       </button>
                     </td>
@@ -345,11 +367,11 @@ const DashboardModule = {
               ` : topProducts.map((p, idx) => `
                 <tr>
                   <td class="font-mono text-muted font-bold">#${idx + 1}</td>
-                  <td style="font-weight: 600;">${p.name}</td>
-                  <td class="sku-code">${p.sku}</td>
+                  <td style="font-weight: 600;">${escapeHtml(p.name || p.productName)}</td>
+                  <td class="sku-code">${escapeHtml(p.sku)}</td>
                   <td class="text-center font-mono font-medium">${p.unitsSold}</td>
                   <td class="text-right font-mono font-bold">${formatINR(p.revenue)}</td>
-                  <td class="text-right font-mono font-bold text-brand-purple">${formatINR(p.profit)}</td>
+                  <td class="text-right font-mono font-bold text-brand-purple">${formatINR(p.profit ?? p.grossProfit ?? 0)}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -357,40 +379,88 @@ const DashboardModule = {
         </div>
       </div>
     `;
+    } catch (err) {
+      console.error('Dashboard render failed:', err);
+      App.renderError(container, {
+        title: 'Dashboard Render Error',
+        message: err?.message || 'An unexpected error occurred while rendering dashboard widgets.',
+        retryAction: 'DashboardModule.render()'
+      });
+    }
   },
 
-  // Generates clean, crisp inline SVG Bar & Area chart
-  renderSalesChartSVG(sales, purchases) {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-    // Aggregate by month (using sample distribution if historical data is small)
-    const salesData = [18500, 64500, 42000, 78000, 92000, 115000];
-    const purchasesData = [35000, 82000, 31000, 54000, 68000, 89000];
+  formatAxisTick(val) {
+    if (val >= 100000) return `${(val / 100000).toFixed(1).replace(/\.0$/, '')}L`;
+    if (val >= 1000) return `${Math.round(val / 1000)}K`;
+    return `${Math.round(val)}`;
+  },
 
-    const maxVal = 130000;
+  // Generates clean, crisp inline SVG Bar chart from real sales & purchase records
+  renderSalesChartSVG(sales, purchases, monthlyOverview = null) {
+    let buckets = [];
+
+    if (Array.isArray(monthlyOverview) && monthlyOverview.length > 0) {
+      buckets = monthlyOverview.map(m => ({
+        label: m.monthName,
+        salesAmount: Number(m.salesAmount) || 0,
+        purchasesAmount: Number(m.purchasesAmount) || 0
+      }));
+    } else {
+      const allDates = [...sales, ...purchases]
+        .map(d => new Date(d.createdAt))
+        .filter(d => !Number.isNaN(d.getTime()));
+
+      const anchor = allDates.length > 0
+        ? new Date(Math.max(...allDates.map(d => d.getTime())))
+        : new Date();
+
+      for (let i = 5; i >= 0; i--) {
+        const dt = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
+        const y = dt.getFullYear();
+        const m = dt.getMonth();
+        const label = dt.toLocaleString('en-IN', { month: 'short' });
+
+        const sTotal = sales
+          .filter(s => {
+            const sd = new Date(s.createdAt);
+            return sd.getFullYear() === y && sd.getMonth() === m;
+          })
+          .reduce((sum, s) => sum + (Number(s.grandTotal) || 0), 0);
+
+        const pTotal = purchases
+          .filter(p => {
+            const pd = new Date(p.createdAt);
+            return pd.getFullYear() === y && pd.getMonth() === m;
+          })
+          .reduce((sum, p) => sum + (Number(p.grandTotal) || 0), 0);
+
+        buckets.push({ label, salesAmount: sTotal, purchasesAmount: pTotal });
+      }
+    }
+
+    const rawMax = Math.max(1000, ...buckets.flatMap(b => [b.salesAmount, b.purchasesAmount]));
+    const maxVal = Math.ceil(rawMax * 1.15);
     const height = 220;
     const width = 580;
+    const chartHeight = height - 40;
     const barWidth = 24;
 
-    const bars = months.map((m, i) => {
-      const sVal = salesData[i];
-      const pVal = purchasesData[i];
-      const sH = (sVal / maxVal) * (height - 40);
-      const pH = (pVal / maxVal) * (height - 40);
+    const bars = buckets.map((b, i) => {
+      const sVal = b.salesAmount;
+      const pVal = b.purchasesAmount;
+      const sH = maxVal > 0 ? (sVal / maxVal) * chartHeight : 0;
+      const pH = maxVal > 0 ? (pVal / maxVal) * chartHeight : 0;
       const x = 50 + (i * 90);
 
       return `
-        <!-- Month Group ${m} -->
         <g class="chart-group">
-          <!-- Purchases bar (blue) -->
-          <rect x="${x}" y="${height - 20 - pH}" width="${barWidth}" height="${pH}" fill="#3978F6" rx="4" opacity="0.85">
-            <title>${m} Purchases: ${formatINR(pVal)}</title>
+          <rect x="${x}" y="${height - 20 - pH}" width="${barWidth}" height="${Math.max(pH, pVal > 0 ? 3 : 0)}" fill="#3978F6" rx="4" opacity="0.85">
+            <title>${escapeHtml(b.label)} Purchases: ${formatINR(pVal)}</title>
           </rect>
-          <!-- Sales bar (purple) -->
-          <rect x="${x + barWidth + 4}" y="${height - 20 - sH}" width="${barWidth}" height="${sH}" fill="#6C4CF1" rx="4">
-            <title>${m} Sales: ${formatINR(sVal)}</title>
+          <rect x="${x + barWidth + 4}" y="${height - 20 - sH}" width="${barWidth}" height="${Math.max(sH, sVal > 0 ? 3 : 0)}" fill="#6C4CF1" rx="4">
+            <title>${escapeHtml(b.label)} Sales: ${formatINR(sVal)}</title>
           </rect>
-          <!-- X Axis Label -->
-          <text x="${x + barWidth}" y="${height}" text-anchor="middle" font-size="11" font-family="'Plus Jakarta Sans', sans-serif" fill="#64748B">${m}</text>
+          <text x="${x + barWidth}" y="${height}" text-anchor="middle" font-size="11" font-family="'Plus Jakarta Sans', sans-serif" fill="#64748B">${escapeHtml(b.label)}</text>
         </g>
       `;
     }).join('');
@@ -398,16 +468,16 @@ const DashboardModule = {
     return `
       <svg viewBox="0 0 ${width} ${height + 10}" class="svg-chart" style="overflow: visible;">
         <!-- Grid lines -->
-        <line x1="30" y1="20" x2="${width}" y2="20" stroke="var(--border-color)" stroke-dasharray="3 3" opacity="0.6" />
-        <line x1="30" y1="75" x2="${width}" y2="75" stroke="var(--border-color)" stroke-dasharray="3 3" opacity="0.6" />
-        <line x1="30" y1="130" x2="${width}" y2="130" stroke="var(--border-color)" stroke-dasharray="3 3" opacity="0.6" />
-        <line x1="30" y1="180" x2="${width}" y2="180" stroke="var(--border-color)" stroke-dasharray="3 3" opacity="0.6" />
-        
-        <!-- Y Axis Markers -->
-        <text x="25" y="24" text-anchor="end" font-size="10" font-family="'JetBrains Mono', monospace" fill="#94A3B8">1.3L</text>
-        <text x="25" y="79" text-anchor="end" font-size="10" font-family="'JetBrains Mono', monospace" fill="#94A3B8">90K</text>
-        <text x="25" y="134" text-anchor="end" font-size="10" font-family="'JetBrains Mono', monospace" fill="#94A3B8">50K</text>
-        <text x="25" y="184" text-anchor="end" font-size="10" font-family="'JetBrains Mono', monospace" fill="#94A3B8">0</text>
+        <line x1="36" y1="20" x2="${width}" y2="20" stroke="var(--border-color)" stroke-dasharray="3 3" opacity="0.6" />
+        <line x1="36" y1="73" x2="${width}" y2="73" stroke="var(--border-color)" stroke-dasharray="3 3" opacity="0.6" />
+        <line x1="36" y1="127" x2="${width}" y2="127" stroke="var(--border-color)" stroke-dasharray="3 3" opacity="0.6" />
+        <line x1="36" y1="180" x2="${width}" y2="180" stroke="var(--border-color)" stroke-dasharray="3 3" opacity="0.6" />
+
+        <!-- Dynamic Y Axis Markers -->
+        <text x="30" y="24" text-anchor="end" font-size="10" font-family="'JetBrains Mono', monospace" fill="#94A3B8">${this.formatAxisTick(maxVal)}</text>
+        <text x="30" y="77" text-anchor="end" font-size="10" font-family="'JetBrains Mono', monospace" fill="#94A3B8">${this.formatAxisTick(maxVal * 0.66)}</text>
+        <text x="30" y="131" text-anchor="end" font-size="10" font-family="'JetBrains Mono', monospace" fill="#94A3B8">${this.formatAxisTick(maxVal * 0.33)}</text>
+        <text x="30" y="184" text-anchor="end" font-size="10" font-family="'JetBrains Mono', monospace" fill="#94A3B8">0</text>
 
         ${bars}
       </svg>

@@ -4,17 +4,23 @@
  * ensures unique indexes, and seeds realistic Indian inventory data.
  */
 
+import 'dotenv/config';
 import { MongoClient, ObjectId, Decimal128 } from 'mongodb';
 import bcrypt from 'bcryptjs';
 
-const CONNECTION_STRING = "mongodb+srv://vishwakarmaanuj757_db_user:jE8eiV6HNVwnTtu5@cluster0.t9lexa7.mongodb.net/?retryWrites=true&w=majority&appName=SmartInventoryCluster";
-const DATABASE_NAME = "SmartInventoryDb";
+const CONNECTION_STRING = process.env.MONGODB_CONNECTION_STRING;
+const DATABASE_NAME = process.env.MONGODB_DATABASE_NAME || "SmartInventoryDb";
 
 async function run() {
+  if (!CONNECTION_STRING || CONNECTION_STRING.includes('<username>')) {
+    console.error("❌ MONGODB_CONNECTION_STRING environment variable is required.");
+    console.error("Set it before running: export MONGODB_CONNECTION_STRING='mongodb+srv://...'");
+    process.exit(1);
+  }
+
   console.log("=================================================");
   console.log("  SMART INVENTORY SYSTEM - MONGODB ATLAS SETUP   ");
   console.log("=================================================");
-  console.log(`Connecting to MongoDB Atlas Cluster: cluster0.t9lexa7.mongodb.net`);
   console.log(`Target Database: ${DATABASE_NAME}`);
 
   const client = new MongoClient(CONNECTION_STRING, {

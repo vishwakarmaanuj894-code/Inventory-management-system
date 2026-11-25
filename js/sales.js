@@ -15,17 +15,29 @@ const SalesModule = {
     const container = document.getElementById('module-sales');
     if (!container) return;
 
-    const [salesRes, productsRes] = await Promise.all([
-      api.sales.getAll(),
-      api.products.getAll()
-    ]);
+    App.renderLoading(container, 'Loading sales ledger...');
 
-    const sales = salesRes.data || [];
-    this.products = productsRes.data || [];
+    try {
+      const [salesRes, productsRes] = await Promise.all([
+        api.sales.getAll(),
+        api.products.getAll()
+      ]);
 
-    const totalRevenue = sales.reduce((sum, s) => sum + (s.grandTotal || 0), 0);
+      if (!salesRes || salesRes.success === false) {
+        App.renderError(container, {
+          title: 'Failed to Load Sales',
+          message: salesRes?.error || 'Could not retrieve sales invoices from the API.',
+          retryAction: 'SalesModule.render()'
+        });
+        return;
+      }
 
-    container.innerHTML = `
+      const sales = salesRes.data || [];
+      this.products = productsRes.data || [];
+
+      const totalRevenue = sales.reduce((sum, s) => sum + (s.grandTotal || 0), 0);
+
+      container.innerHTML = `
       <div class="page-header">
         <div>
           <h1 class="page-title">Sales Orders & Customer Invoicing</h1>
@@ -88,22 +100,22 @@ const SalesModule = {
                 </tr>
               ` : sales.map(s => `
                 <tr>
-                  <td class="font-mono font-bold" style="color: var(--color-primary);">${s.invoiceNumber}</td>
+                  <td class="font-mono font-bold" style="color: var(--color-primary);">${escapeHtml(s.invoiceNumber)}</td>
                   <td>
-                    <div style="font-weight: 600;">${s.customerName || 'Walk-in Customer'}</div>
-                    <div class="text-muted" style="font-size: 11.5px;">${s.customerPhone || ''}</div>
+                    <div style="font-weight: 600;">${escapeHtml(s.customerName || 'Walk-in Customer')}</div>
+                    <div class="text-muted" style="font-size: 11.5px;">${escapeHtml(s.customerPhone || '')}</div>
                   </td>
                   <td class="font-mono text-muted" style="font-size: 12px;">${formatDate(s.createdAt)}</td>
                   <td class="text-center font-mono">
-                    <span class="badge badge-purple">${s.items.length} items</span>
+                    <span class="badge badge-purple">${(s.items || []).length} items</span>
                   </td>
-                  <td>${s.paymentMethod || 'UPI'}</td>
+                  <td>${escapeHtml(s.paymentMethod || 'UPI')}</td>
                   <td class="text-right font-mono font-bold">${formatINR(s.grandTotal)}</td>
                   <td class="text-center">
-                    <span class="badge badge-success">✓ ${s.status || 'Paid'}</span>
+                    <span class="badge badge-success">✓ ${escapeHtml(s.status || 'Paid')}</span>
                   </td>
                   <td class="text-right">
-                    <button class="btn btn-outline btn-sm" onclick="SalesModule.viewInvoice('${s._id}')">
+                    <button class="btn btn-outline btn-sm" onclick="SalesModule.viewInvoice('${escapeHtml(s._id)}')">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                       View Invoice
                     </button>
@@ -117,6 +129,14 @@ const SalesModule = {
 
       <div id="sales-modal-root"></div>
     `;
+    } catch (err) {
+      console.error('Sales render error:', err);
+      App.renderError(container, {
+        title: 'Sales Page Error',
+        message: err?.message || 'Unexpected error rendering sales orders.',
+        retryAction: 'SalesModule.render()'
+      });
+    }
   },
 
   openNewSaleModal() {
@@ -152,14 +172,14 @@ const SalesModule = {
               <h3 class="modal-title">Generate Customer Sales Invoice</h3>
               <div style="font-size: 12px; color: var(--text-muted);">Stock availability is checked live; insufficient stock prevents dispatch</div>
             </div>
-            <button class="btn btn-ghost btn-icon-only" onclick="SalesModule.closeModal()">✕</button>
+            <button type="button" class="btn btn-ghost btn-icon-only" onclick="SalesModule.closeModal()">✕</button>
           </div>
           <form id="sales-form" onsubmit="SalesModule.saveSale(event)">
             <div class="modal-body">
               <div class="form-row" style="display: flex; gap: 16px; margin-bottom: 14px;">
                 <div class="form-group" style="flex: 1;">
                   <label class="form-label required">Invoice Reference #</label>
-                  <input type="text" name="invoiceNumber" class="form-control font-mono" required value="${invoiceNumber}" />
+                  <input type="text" name="invoiceNumber" class="form-control font-mono" required value="${escapeHtml(invoiceNumber)}" />
                 </div>
                 <div class="form-group" style="flex: 1.5;">
                   <label class="form-label required">Customer / Company Name</label>
@@ -250,21 +270,28 @@ const SalesModule = {
     this.recalculateTotals();
   },
 
+  getTotalRequestedForProduct(productId) {
+    return this.activeSaleItems
+      .filter(i => i.productId === productId)
+      .reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+  },
+
   renderItemsTable() {
     const tbody = document.getElementById('sales-items-body');
     if (!tbody) return;
 
     tbody.innerHTML = this.activeSaleItems.map((item, index) => {
-      const isInsufficient = item.quantity > item.availableStock;
+      const totalRequested = this.getTotalRequestedForProduct(item.productId);
+      const isInsufficient = item.quantity > item.availableStock || totalRequested > item.availableStock;
       const isZero = item.availableStock === 0;
 
       return `
-        <tr style="${isInsufficient ? 'background-color: var(--color-danger-bg);' : ''}">
+        <tr id="sales-item-row-${index}" style="${isInsufficient ? 'background-color: var(--color-danger-bg);' : ''}">
           <td>
             <select class="form-control" onchange="SalesModule.handleProductSelect(${index}, this.value)">
               ${this.products.map(p => `
-                <option value="${p._id}" ${item.productId === p._id ? 'selected' : ''}>
-                  ${p.name} (Stock: ${p.stockQuantity})
+                <option value="${escapeHtml(p._id)}" ${item.productId === p._id ? 'selected' : ''}>
+                  ${escapeHtml(p.name)} (Stock: ${p.stockQuantity})
                 </option>
               `).join('')}
             </select>
@@ -275,13 +302,13 @@ const SalesModule = {
             </span>
           </td>
           <td>
-            <input type="number" min="1" max="${item.availableStock}" class="form-control font-mono text-center ${isInsufficient ? 'border-danger' : ''}" value="${item.quantity}" oninput="SalesModule.handleQuantityChange(${index}, this.value)" />
-            ${isInsufficient ? `<div style="font-size: 10px; color: var(--color-danger); margin-top: 2px;">Exceeds stock!</div>` : ''}
+            <input type="number" id="sales-item-qty-${index}" min="1" max="${item.availableStock}" class="form-control font-mono text-center ${isInsufficient ? 'border-danger' : ''}" value="${item.quantity}" oninput="SalesModule.handleQuantityChange(${index}, this.value)" />
+            <div id="sales-item-warn-${index}" style="font-size: 10px; color: var(--color-danger); margin-top: 2px; ${isInsufficient ? '' : 'display: none;'}">Exceeds stock!</div>
           </td>
           <td>
-            <input type="number" min="0" step="any" class="form-control font-mono text-right" value="${item.sellingPrice}" oninput="SalesModule.handlePriceChange(${index}, this.value)" />
+            <input type="number" min="0.01" step="any" class="form-control font-mono text-right" value="${item.sellingPrice}" oninput="SalesModule.handlePriceChange(${index}, this.value)" />
           </td>
-          <td class="text-right font-mono font-bold" style="padding-right: 12px;">
+          <td id="sales-item-total-${index}" class="text-right font-mono font-bold" style="padding-right: 12px;">
             ${formatINR(item.total)}
           </td>
           <td class="text-center">
@@ -294,6 +321,19 @@ const SalesModule = {
         </tr>
       `;
     }).join('');
+  },
+
+  refreshRowWarnings() {
+    this.activeSaleItems.forEach((item, idx) => {
+      const totalRequested = this.getTotalRequestedForProduct(item.productId);
+      const isInsufficient = item.quantity > item.availableStock || totalRequested > item.availableStock;
+      const row = document.getElementById(`sales-item-row-${idx}`);
+      const qtyInput = document.getElementById(`sales-item-qty-${idx}`);
+      const warnEl = document.getElementById(`sales-item-warn-${idx}`);
+      if (row) row.style.backgroundColor = isInsufficient ? 'var(--color-danger-bg)' : '';
+      if (qtyInput) qtyInput.classList.toggle('border-danger', isInsufficient);
+      if (warnEl) warnEl.style.display = isInsufficient ? 'block' : 'none';
+    });
   },
 
   addLineItem() {
@@ -335,25 +375,38 @@ const SalesModule = {
   },
 
   handleQuantityChange(index, qty) {
-    const q = parseInt(qty, 10) || 0;
+    const parsed = parseInt(qty, 10);
+    const q = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
     this.activeSaleItems[index].quantity = q;
     this.activeSaleItems[index].total = this.activeSaleItems[index].sellingPrice * q;
-    this.renderItemsTable();
+    const totalEl = document.getElementById(`sales-item-total-${index}`);
+    if (totalEl) {
+      totalEl.textContent = formatINR(this.activeSaleItems[index].total);
+      this.refreshRowWarnings();
+    } else {
+      this.renderItemsTable();
+    }
     this.recalculateTotals();
   },
 
   handlePriceChange(index, price) {
-    const p = Math.max(0, parseFloat(price) || 0);
+    const parsed = parseFloat(price);
+    const p = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
     this.activeSaleItems[index].sellingPrice = p;
     this.activeSaleItems[index].total = p * this.activeSaleItems[index].quantity;
-    this.renderItemsTable();
+    const totalEl = document.getElementById(`sales-item-total-${index}`);
+    if (totalEl) {
+      totalEl.textContent = formatINR(this.activeSaleItems[index].total);
+    } else {
+      this.renderItemsTable();
+    }
     this.recalculateTotals();
   },
 
   recalculateTotals() {
     const subtotal = this.activeSaleItems.reduce((sum, item) => sum + item.total, 0);
-    const taxRate = parseFloat(document.getElementById('sale-tax-rate')?.value) || 0;
-    const discount = parseFloat(document.getElementById('sale-discount')?.value) || 0;
+    const taxRate = Math.max(0, Math.min(100, parseFloat(document.getElementById('sale-tax-rate')?.value) || 0));
+    const discount = Math.max(0, parseFloat(document.getElementById('sale-discount')?.value) || 0);
 
     const taxAmount = (subtotal * taxRate) / 100;
     const grandTotal = Math.max(0, subtotal + taxAmount - discount);
@@ -378,23 +431,46 @@ const SalesModule = {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
+    const submitBtn = form.querySelector('button[type="submit"]');
 
-    // PREVENT SALES WHEN STOCK IS INSUFFICIENT
+    const invoiceNumber = (formData.get('invoiceNumber') || '').trim();
+    const customerName = (formData.get('customerName') || '').trim();
+    if (!invoiceNumber || !customerName) {
+      App.showToast('Invoice reference number and customer name are required.', 'warning');
+      return;
+    }
+
+    const requestedByProduct = {};
     for (const item of this.activeSaleItems) {
-      if (item.quantity <= 0) {
+      if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
         App.showToast(`Please enter a quantity greater than 0 for '${item.productName}'`, 'warning');
         return;
       }
-      if (item.quantity > item.availableStock) {
-        App.showToast(`Cannot sell '${item.productName}': requested quantity (${item.quantity}) exceeds available inventory (${item.availableStock}).`, 'error');
+      if (!Number.isFinite(item.sellingPrice) || item.sellingPrice <= 0) {
+        App.showToast(`Unit selling price must be greater than zero for '${item.productName}'`, 'warning');
+        return;
+      }
+      requestedByProduct[item.productId] = (requestedByProduct[item.productId] || 0) + item.quantity;
+    }
+
+    for (const [productId, totalQty] of Object.entries(requestedByProduct)) {
+      const sampleItem = this.activeSaleItems.find(i => i.productId === productId);
+      const availableStock = sampleItem ? sampleItem.availableStock : 0;
+      if (totalQty > availableStock) {
+        App.showToast(`Cannot sell '${sampleItem.productName}': total requested quantity (${totalQty}) exceeds available inventory (${availableStock}).`, 'error');
         return;
       }
     }
 
+    if (this.calculated.discount > this.calculated.subtotal + this.calculated.taxAmount) {
+      App.showToast('Discount cannot exceed subtotal plus GST tax amount.', 'warning');
+      return;
+    }
+
     const payload = {
-      invoiceNumber: formData.get('invoiceNumber').trim(),
-      customerName: formData.get('customerName').trim(),
-      customerPhone: formData.get('customerPhone').trim(),
+      invoiceNumber,
+      customerName,
+      customerPhone: (formData.get('customerPhone') || '').trim(),
       paymentMethod: formData.get('paymentMethod'),
       items: this.activeSaleItems,
       subtotal: this.calculated.subtotal,
@@ -402,20 +478,33 @@ const SalesModule = {
       taxAmount: this.calculated.taxAmount,
       discount: this.calculated.discount,
       grandTotal: this.calculated.grandTotal,
-      notes: formData.get('notes'),
+      notes: (formData.get('notes') || '').trim(),
       status: 'Completed'
     };
 
-    const res = await api.sales.create(payload);
-    if (res.success) {
-      App.showToast("Sale invoice processed successfully! Warehouse inventory has been deducted.", "success");
-      this.closeModal();
-      await this.render();
-      DashboardModule.render();
-      ProductsModule.render();
-      InventoryModule.render();
-    } else {
-      App.showToast(res.error || "Failed to process sale", "error");
+    const origText = submitBtn ? submitBtn.innerHTML : '';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Processing...';
+    }
+
+    try {
+      const res = await api.sales.create(payload);
+      if (res.success) {
+        App.showToast("Sale invoice processed successfully! Warehouse inventory has been deducted.", "success");
+        this.closeModal();
+        await this.render();
+        DashboardModule.render();
+        ProductsModule.render();
+        InventoryModule.render();
+      } else {
+        App.showToast(res.error || "Failed to process sale", "error");
+      }
+    } finally {
+      if (submitBtn && document.body.contains(submitBtn)) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = origText;
+      }
     }
   },
 
@@ -434,13 +523,13 @@ const SalesModule = {
       <div class="modal-overlay active" id="sales-modal">
         <div class="modal-container modal-xl">
           <div class="modal-header no-print">
-            <h3 class="modal-title">GST Tax Invoice: ${s.invoiceNumber}</h3>
+            <h3 class="modal-title">GST Tax Invoice: ${escapeHtml(s.invoiceNumber)}</h3>
             <div style="display: flex; gap: 8px;">
-              <button class="btn btn-primary btn-sm" onclick="window.print()">
+              <button type="button" class="btn btn-primary btn-sm" onclick="window.print()">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
                 Print Invoice
               </button>
-              <button class="btn btn-ghost btn-icon-only" onclick="SalesModule.closeModal()">✕</button>
+              <button type="button" class="btn btn-ghost btn-icon-only" onclick="SalesModule.closeModal()">✕</button>
             </div>
           </div>
           <div class="modal-body" style="background-color: var(--bg-surface-subtle); padding: 24px;">
@@ -451,31 +540,31 @@ const SalesModule = {
                   <div style="font-size: 13px; color: #64748B;">Issued under GST Rules, Government of India</div>
                 </div>
                 <div style="text-align: right;">
-                  <div class="font-mono" style="font-size: 18px; font-weight: 700; color: #0F172A;">${s.invoiceNumber}</div>
+                  <div class="font-mono" style="font-size: 18px; font-weight: 700; color: #0F172A;">${escapeHtml(s.invoiceNumber)}</div>
                   <div style="font-size: 13px; color: #64748B;">Date: ${formatDate(s.createdAt)}</div>
-                  <div style="font-size: 13px; color: #64748B;">Payment: <strong style="color: #047857;">PAID (${s.paymentMethod || 'UPI'})</strong></div>
+                  <div style="font-size: 13px; color: #64748B;">Payment: <strong style="color: #047857;">PAID (${escapeHtml(s.paymentMethod || 'UPI')})</strong></div>
                 </div>
               </div>
 
               <div class="invoice-bill-grid">
                 <div class="invoice-party-box">
                   <div class="invoice-party-title">Sold By (Supplier / Seller)</div>
-                  <strong style="font-size: 14px; color: #0F172A;">${settings.companyName || 'Bharat Logistics'}</strong>
+                  <strong style="font-size: 14px; color: #0F172A;">${escapeHtml(settings.companyName || 'Bharat Logistics')}</strong>
                   <div style="font-size: 12.5px; color: #475569; margin-top: 4px;">
-                    ${settings.address || ''}<br/>
-                    ${settings.city || ''}, ${settings.state || ''} - ${settings.pincode || ''}<br/>
-                    GSTIN: <span class="font-mono"><strong>${settings.gstin || '-'}</strong></span><br/>
-                    Contact: ${settings.phone || '-'}
+                    ${escapeHtml(settings.address || '')}<br/>
+                    ${escapeHtml(settings.city || '')}, ${escapeHtml(settings.state || '')} - ${escapeHtml(settings.pincode || '')}<br/>
+                    GSTIN: <span class="font-mono"><strong>${escapeHtml(settings.gstin || '-')}</strong></span><br/>
+                    Contact: ${escapeHtml(settings.phone || '-')}
                   </div>
                 </div>
 
                 <div class="invoice-party-box">
                   <div class="invoice-party-title">Billed To (Customer / Buyer)</div>
-                  <strong style="font-size: 14px; color: #0F172A;">${s.customerName || 'Walk-in Retail Customer'}</strong>
+                  <strong style="font-size: 14px; color: #0F172A;">${escapeHtml(s.customerName || 'Walk-in Retail Customer')}</strong>
                   <div style="font-size: 12.5px; color: #475569; margin-top: 4px;">
-                    Mobile: <span class="font-mono">${s.customerPhone || 'Not provided'}</span><br/>
-                    Email: ${s.customerEmail || '-'}<br/>
-                    Place of Supply: ${settings.state || 'Karnataka'} (State Code: 29)
+                    Mobile: <span class="font-mono">${escapeHtml(s.customerPhone || 'Not provided')}</span><br/>
+                    Email: ${escapeHtml(s.customerEmail || '-')}<br/>
+                    Place of Supply: ${escapeHtml(settings.state || 'Karnataka')} (State Code: 29)
                   </div>
                 </div>
               </div>
@@ -492,11 +581,11 @@ const SalesModule = {
                   </tr>
                 </thead>
                 <tbody>
-                  ${s.items.map((it, idx) => `
+                  ${(s.items || []).map((it, idx) => `
                     <tr>
                       <td class="font-mono text-muted">${idx + 1}</td>
-                      <td style="font-weight: 600;">${it.productName}</td>
-                      <td class="sku-code">${it.sku}</td>
+                      <td style="font-weight: 600;">${escapeHtml(it.productName)}</td>
+                      <td class="sku-code">${escapeHtml(it.sku)}</td>
                       <td class="text-center font-mono font-bold">${it.quantity}</td>
                       <td class="text-right font-mono">${formatINR(it.sellingPrice)}</td>
                       <td class="text-right font-mono font-bold">${formatINR(it.total)}</td>
@@ -510,7 +599,7 @@ const SalesModule = {
                   <strong>Terms & Conditions:</strong><br/>
                   1. Goods once sold cannot be returned after 7 days.<br/>
                   2. All disputes subject to local jurisdiction.<br/>
-                  ${s.notes ? `Remarks: ${s.notes}<br/>` : ''}
+                  ${s.notes ? `Remarks: ${escapeHtml(s.notes)}<br/>` : ''}
                   Thank you for your business!
                 </div>
 
@@ -538,8 +627,8 @@ const SalesModule = {
             </div>
           </div>
           <div class="modal-footer no-print">
-            <button class="btn btn-outline" onclick="SalesModule.closeModal()">Close</button>
-            <button class="btn btn-primary" onclick="window.print()">
+            <button type="button" class="btn btn-outline" onclick="SalesModule.closeModal()">Close</button>
+            <button type="button" class="btn btn-primary" onclick="window.print()">
               Print Sales Bill
             </button>
           </div>

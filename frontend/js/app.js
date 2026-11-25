@@ -8,14 +8,36 @@ const App = {
   currentModule: 'dashboard',
   theme: 'light',
 
-  async init() {
-    this.initTheme();
-    this.bindEvents();
-    this.updateUserBadge();
+  getHashModule() {
+    const raw = (window.location.hash || '').replace(/^#\/?/, '').split('?')[0].trim().toLowerCase();
+    return raw || 'dashboard';
+  },
 
-    // Check URL hash or default to dashboard
-    const hash = window.location.hash.replace('#', '') || 'dashboard';
-    this.navigateTo(hash);
+  async init() {
+    try {
+      const user = await api.auth.getCurrentUser();
+      if (!user) {
+        window.location.href = 'login.html';
+        return;
+      }
+
+      this.initTheme();
+      this.bindEvents();
+      await this.updateUserBadge();
+
+      // Check URL hash or default to dashboard
+      await this.navigateTo(this.getHashModule());
+    } catch (err) {
+      console.error('App initialization failed:', err);
+      const container = document.getElementById('module-dashboard');
+      if (container) {
+        this.renderError(container, {
+          title: 'Application Initialization Error',
+          message: err?.message || 'Unable to initialize Smart Inventory workspace.',
+          retryAction: 'App.init()'
+        });
+      }
+    }
   },
 
   initTheme() {
@@ -50,18 +72,15 @@ const App = {
 
       nameEls.forEach(el => el.innerText = user.name || 'Admin');
       roleEls.forEach(el => el.innerText = user.role || 'Administrator');
-      avatarEls.forEach(el => el.innerText = user.avatar || user.name.slice(0, 2).toUpperCase());
+      avatarEls.forEach(el => el.innerText = user.avatar || (user.name || 'AD').slice(0, 2).toUpperCase());
     }
   },
 
   bindEvents() {
-    // Window hashchange routing
     window.addEventListener('hashchange', () => {
-      const hash = window.location.hash.replace('#', '') || 'dashboard';
-      this.navigateTo(hash, false);
+      this.navigateTo(this.getHashModule(), false);
     });
 
-    // Mobile sidebar backdrop close
     const backdrop = document.getElementById('sidebar-backdrop');
     if (backdrop) {
       backdrop.addEventListener('click', () => {
@@ -90,93 +109,196 @@ const App = {
 
   async navigateTo(moduleId, updateHash = true) {
     if (moduleId === 'logout') {
-      this.handleLogout();
+      await this.handleLogout();
       return;
     }
 
-    this.currentModule = moduleId;
+    const validModules = ['dashboard', 'products', 'categories', 'suppliers', 'purchases', 'sales', 'inventory', 'reports', 'settings'];
+    const resolvedModule = validModules.includes(moduleId) ? moduleId : 'dashboard';
+
+    this.currentModule = resolvedModule;
     if (updateHash) {
-      window.location.hash = moduleId;
+      window.location.hash = resolvedModule;
     }
 
     this.closeMobileSidebar();
 
-    // Update active nav link
     document.querySelectorAll('.nav-item').forEach(el => {
-      if (el.getAttribute('data-module') === moduleId) {
+      if (el.getAttribute('data-module') === resolvedModule) {
         el.classList.add('active');
       } else {
         el.classList.remove('active');
       }
     });
 
-    // Update active page container
     document.querySelectorAll('.module-page').forEach(page => {
       page.classList.remove('active');
     });
 
-    const targetPage = document.getElementById(`module-${moduleId}`);
+    const targetPage = document.getElementById(`module-${resolvedModule}`);
     if (targetPage) {
       targetPage.classList.add('active');
     }
 
-    // Update Topbar Breadcrumb
     const breadcrumbEl = document.getElementById('breadcrumb-current');
     if (breadcrumbEl) {
-      const title = moduleId.charAt(0).toUpperCase() + moduleId.slice(1);
+      const title = resolvedModule.charAt(0).toUpperCase() + resolvedModule.slice(1);
       breadcrumbEl.innerText = title;
     }
 
-    // Scroll to top
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
-    // Initialize/Render the module
-    switch (moduleId) {
-      case 'dashboard':
-        await DashboardModule.init();
-        break;
-      case 'products':
-        await ProductsModule.init();
-        break;
-      case 'categories':
-        await CategoriesModule.init();
-        break;
-      case 'suppliers':
-        await SuppliersModule.init();
-        break;
-      case 'purchases':
-        await PurchasesModule.init();
-        break;
-      case 'sales':
-        await SalesModule.init();
-        break;
-      case 'inventory':
-        await InventoryModule.init();
-        break;
-      case 'reports':
-        await ReportsModule.init();
-        break;
-      case 'settings':
-        await this.renderSettings();
-        break;
-      default:
-        await DashboardModule.init();
+    try {
+      switch (resolvedModule) {
+        case 'dashboard':
+          await DashboardModule.init();
+          break;
+        case 'products':
+          await ProductsModule.init();
+          break;
+        case 'categories':
+          await CategoriesModule.init();
+          break;
+        case 'suppliers':
+          await SuppliersModule.init();
+          break;
+        case 'purchases':
+          await PurchasesModule.init();
+          break;
+        case 'sales':
+          await SalesModule.init();
+          break;
+        case 'inventory':
+          await InventoryModule.init();
+          break;
+        case 'reports':
+          await ReportsModule.init();
+          break;
+        case 'settings':
+          await this.renderSettings();
+          break;
+        default:
+          await DashboardModule.init();
+      }
+    } catch (err) {
+      console.error(`Failed to render module '${resolvedModule}':`, err);
+      if (targetPage) {
+        this.renderError(targetPage, {
+          title: `Unable to load ${resolvedModule.charAt(0).toUpperCase() + resolvedModule.slice(1)}`,
+          message: err?.message || 'An unexpected rendering or network error occurred.',
+          retryAction: `App.navigateTo('${resolvedModule}', false)`
+        });
+      }
     }
   },
 
+  renderLoading(container, message = 'Loading workspace data...') {
+    if (!container) return;
+    container.innerHTML = `
+      <div class="module-loading-state" role="status" aria-live="polite">
+        <div class="loading-spinner-lg"></div>
+        <div style="font-size: 14px; font-weight: 600; color: var(--text-primary);">${escapeHtml(message)}</div>
+        <div style="font-size: 12.5px; color: var(--text-muted);">Fetching records and verifying inventory metrics...</div>
+      </div>
+    `;
+  },
+
+  renderError(container, { title = 'Failed to load data', message = 'Unable to connect to the server.', retryAction = 'App.navigateTo(App.currentModule, false)' } = {}) {
+    if (!container) return;
+    const isAuthIssue = /401|unauthorized|session expired|sign in/i.test(message);
+    container.innerHTML = `
+      <div class="module-error-card" role="alert">
+        <div class="module-error-icon">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+        </div>
+        <h2 style="font-size: 18px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px;">${escapeHtml(title)}</h2>
+        <p style="font-size: 13.5px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 20px;">${escapeHtml(message)}</p>
+        <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+          <button type="button" class="btn btn-primary" onclick="${escapeHtml(retryAction)}">
+            ↻ Retry Request
+          </button>
+          <button type="button" class="btn btn-outline" onclick="App.navigateTo('settings')">
+            Open API Settings
+          </button>
+          ${isAuthIssue ? `<a href="login.html" class="btn btn-outline">Sign In Again</a>` : ''}
+        </div>
+      </div>
+    `;
+  },
+
+  renderErrorBanner(message, retryAction = 'App.navigateTo(App.currentModule, false)') {
+    if (!message) return '';
+    return `
+      <div class="module-error-banner" role="alert">
+        <div>
+          <strong>API Connection Warning:</strong> ${escapeHtml(message)}
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn btn-outline btn-sm" onclick="${escapeHtml(retryAction)}">↻ Retry</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="App.navigateTo('settings')">API Settings</button>
+        </div>
+      </div>
+    `;
+  },
+
+  /**
+   * Reusable in-app confirmation modal (replaces native window.confirm blocked in iframes)
+   */
+  confirmAction({ title = 'Confirm Action', message = 'Are you sure?', confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false } = {}) {
+    return new Promise((resolve) => {
+      let root = document.getElementById('confirm-modal-root');
+      if (!root) {
+        root = document.createElement('div');
+        root.id = 'confirm-modal-root';
+        document.body.appendChild(root);
+      }
+
+      const cleanup = (result) => {
+        root.innerHTML = '';
+        resolve(result);
+      };
+
+      root.innerHTML = `
+        <div class="modal-overlay active" id="app-confirm-modal" role="dialog" aria-modal="true">
+          <div class="modal-container" style="max-width: 440px;">
+            <div class="modal-header">
+              <h3 class="modal-title">${escapeHtml(title)}</h3>
+              <button type="button" class="btn btn-ghost btn-icon-only" id="confirm-close-btn">✕</button>
+            </div>
+            <div class="modal-body">
+              <p style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">${escapeHtml(message)}</p>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline" id="confirm-cancel-btn">${escapeHtml(cancelLabel)}</button>
+              <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'}" id="confirm-ok-btn">${escapeHtml(confirmLabel)}</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('confirm-close-btn').onclick = () => cleanup(false);
+      document.getElementById('confirm-cancel-btn').onclick = () => cleanup(false);
+      document.getElementById('confirm-ok-btn').onclick = () => cleanup(true);
+    });
+  },
+
   async handleLogout() {
-    if (confirm("Are you sure you want to sign out from Smart Inventory System?")) {
+    const confirmed = await this.confirmAction({
+      title: 'Sign Out',
+      message: 'Are you sure you want to sign out from Smart Inventory System?',
+      confirmLabel: 'Sign Out',
+      danger: true
+    });
+    if (confirmed) {
       await api.auth.logout();
       window.location.href = 'login.html';
     }
   },
 
-  handleGlobalSearch(query) {
-    if (!query) return;
-    // Route to products with search query
-    this.navigateTo('products');
-    ProductsModule.currentFilter.search = query;
-    ProductsModule.render();
+  async handleGlobalSearch(query) {
+    if (!query || !query.trim()) return;
+    ProductsModule.currentFilter.search = query.trim();
+    await this.navigateTo('products');
   },
 
   // Toast Notification System
@@ -200,16 +322,13 @@ const App = {
 
     toast.innerHTML = `
       ${iconSvg}
-      <div class="toast-message">${message}</div>
-      <button class="toast-close" onclick="this.parentElement.remove()">✕</button>
+      <div class="toast-message">${escapeHtml(message)}</div>
+      <button type="button" class="toast-close" onclick="this.parentElement.remove()">✕</button>
     `;
 
     container.appendChild(toast);
-
-    // Trigger enter animation
     setTimeout(() => toast.classList.add('show'), 10);
 
-    // Auto dismiss after 4 seconds
     setTimeout(() => {
       toast.classList.remove('show');
       setTimeout(() => toast.remove(), 250);
@@ -221,9 +340,24 @@ const App = {
     const container = document.getElementById('module-settings');
     if (!container) return;
 
-    const res = await api.settings.get();
-    const settings = res.data || {};
-    const user = (await api.auth.getCurrentUser()) || {};
+    this.renderLoading(container, 'Loading system settings...');
+
+    try {
+      const res = await api.settings.get();
+      if (!res || !res.success) {
+        this.renderError(container, {
+          title: 'Failed to load Settings',
+          message: res?.error || 'Could not retrieve system settings.',
+          retryAction: 'App.renderSettings()'
+        });
+        return;
+      }
+      const settings = res.data || {};
+      const isLocalHost = Boolean(window.APP_CONFIG?.isLocalHost);
+      const apiPlaceholder = isLocalHost ? 'http://localhost:5000/api' : 'https://your-api-domain.com/api';
+      const buildApiHint = window.APP_CONFIG?.buildApiBaseUrl
+        ? `Build default detected from VITE_API_BASE_URL: ${window.APP_CONFIG.buildApiBaseUrl}`
+        : (isLocalHost ? 'Local dev fallback: http://localhost:5000/api' : 'Set your hosted ASP.NET Core Web API URL (e.g. https://your-api.onrender.com/api).');
 
     container.innerHTML = `
       <div class="page-header">
@@ -242,47 +376,47 @@ const App = {
           <form onsubmit="App.saveBusinessSettings(event)" style="padding: 20px;">
             <div class="form-group">
               <label class="form-label required">Company Legal Name</label>
-              <input type="text" name="companyName" class="form-control" required value="${settings.companyName || ''}" />
+              <input type="text" name="companyName" class="form-control" required value="${escapeHtml(settings.companyName || '')}" />
             </div>
 
             <div class="form-group">
               <label class="form-label required">Trade / Brand Name</label>
-              <input type="text" name="tradeName" class="form-control" required value="${settings.tradeName || ''}" />
+              <input type="text" name="tradeName" class="form-control" required value="${escapeHtml(settings.tradeName || '')}" />
             </div>
 
             <div class="form-row" style="display: flex; gap: 14px;">
               <div class="form-group" style="flex: 1;">
                 <label class="form-label required">GSTIN</label>
-                <input type="text" name="gstin" class="form-control font-mono" maxlength="15" required value="${settings.gstin || ''}" />
+                <input type="text" name="gstin" class="form-control font-mono" maxlength="15" required value="${escapeHtml(settings.gstin || '')}" />
               </div>
               <div class="form-group" style="flex: 1;">
                 <label class="form-label required">Phone Contact</label>
-                <input type="tel" name="phone" class="form-control font-mono" required value="${settings.phone || ''}" />
+                <input type="tel" name="phone" class="form-control font-mono" required value="${escapeHtml(settings.phone || '')}" />
               </div>
             </div>
 
             <div class="form-group">
               <label class="form-label required">Official Email</label>
-              <input type="email" name="email" class="form-control" required value="${settings.email || ''}" />
+              <input type="email" name="email" class="form-control" required value="${escapeHtml(settings.email || '')}" />
             </div>
 
             <div class="form-group">
               <label class="form-label required">Registered Office Address</label>
-              <textarea name="address" class="form-control" rows="2" required>${settings.address || ''}</textarea>
+              <textarea name="address" class="form-control" rows="2" required>${escapeHtml(settings.address || '')}</textarea>
             </div>
 
             <div class="form-row" style="display: flex; gap: 12px;">
               <div class="form-group" style="flex: 1;">
                 <label class="form-label required">City</label>
-                <input type="text" name="city" class="form-control" required value="${settings.city || ''}" />
+                <input type="text" name="city" class="form-control" required value="${escapeHtml(settings.city || '')}" />
               </div>
               <div class="form-group" style="flex: 1;">
                 <label class="form-label required">State</label>
-                <input type="text" name="state" class="form-control" required value="${settings.state || ''}" />
+                <input type="text" name="state" class="form-control" required value="${escapeHtml(settings.state || '')}" />
               </div>
               <div class="form-group" style="flex: 1;">
                 <label class="form-label required">PIN Code</label>
-                <input type="text" name="pincode" class="form-control font-mono" required value="${settings.pincode || ''}" />
+                <input type="text" name="pincode" class="form-control font-mono" required value="${escapeHtml(settings.pincode || '')}" />
               </div>
             </div>
 
@@ -300,18 +434,18 @@ const App = {
               <div class="form-row" style="display: flex; gap: 14px;">
                 <div class="form-group" style="flex: 1;">
                   <label class="form-label required">Currency Symbol</label>
-                  <input type="text" name="currencySymbol" class="form-control font-mono" required value="${settings.currencySymbol || '₹'}" readonly />
+                  <input type="text" name="currencySymbol" class="form-control font-mono" required value="${escapeHtml(settings.currencySymbol || '₹')}" readonly />
                   <div class="input-helper">Locked to Indian Rupee (₹) as per specifications</div>
                 </div>
                 <div class="form-group" style="flex: 1;">
                   <label class="form-label required">Default GST Rate (%)</label>
-                  <input type="number" min="0" max="28" name="defaultTaxRate" class="form-control font-mono" required value="${settings.defaultTaxRate || 18}" />
+                  <input type="number" min="0" max="28" name="defaultTaxRate" class="form-control font-mono" required value="${Number(settings.defaultTaxRate ?? 18)}" />
                 </div>
               </div>
 
               <div class="form-group">
                 <label class="form-label required">Default Low-Stock Threshold</label>
-                <input type="number" min="1" max="100" name="lowStockThreshold" class="form-control font-mono" required value="${settings.lowStockThreshold || 10}" />
+                <input type="number" min="1" max="100" name="lowStockThreshold" class="form-control font-mono" required value="${Number(settings.lowStockThreshold ?? 10)}" />
                 <div class="input-helper">Items below this quantity will flag low-stock warnings across the system</div>
               </div>
 
@@ -341,9 +475,9 @@ const App = {
             <div style="padding: 20px;">
               <form onsubmit="App.saveApiSettings(event)">
                 <div class="form-group">
-                  <label class="form-label required">ASP.NET Core Web API Base URL</label>
-                  <input type="url" id="api-base-url-input" class="form-control font-mono" required value="${API_CONFIG.baseUrl}" placeholder="http://localhost:5000/api" />
-                  <div class="input-helper">Host URL where InventoryManagementSystem.Api is listening (e.g. http://localhost:5000/api or https://localhost:7001/api)</div>
+                  <label class="form-label">ASP.NET Core Web API Base URL</label>
+                  <input type="url" id="api-base-url-input" class="form-control font-mono" value="${escapeHtml(API_CONFIG.baseUrl || '')}" placeholder="${escapeHtml(apiPlaceholder)}" />
+                  <div class="input-helper">${escapeHtml(buildApiHint)}</div>
                 </div>
 
                 <div class="form-group">
@@ -389,6 +523,14 @@ const App = {
         </div>
       </div>
     `;
+    } catch (err) {
+      console.error('Failed to render settings:', err);
+      this.renderError(container, {
+        title: 'Failed to load Settings',
+        message: err?.message || 'Unexpected error rendering system settings.',
+        retryAction: 'App.renderSettings()'
+      });
+    }
   },
 
   async saveBusinessSettings(e) {
@@ -397,15 +539,15 @@ const App = {
     const formData = new FormData(form);
 
     const payload = {
-      companyName: formData.get('companyName'),
-      tradeName: formData.get('tradeName'),
-      gstin: formData.get('gstin').toUpperCase(),
-      phone: formData.get('phone'),
-      email: formData.get('email'),
-      address: formData.get('address'),
-      city: formData.get('city'),
-      state: formData.get('state'),
-      pincode: formData.get('pincode')
+      companyName: formData.get('companyName').trim(),
+      tradeName: formData.get('tradeName').trim(),
+      gstin: formData.get('gstin').trim().toUpperCase(),
+      phone: formData.get('phone').trim(),
+      email: formData.get('email').trim(),
+      address: formData.get('address').trim(),
+      city: formData.get('city').trim(),
+      state: formData.get('state').trim(),
+      pincode: formData.get('pincode').trim()
     };
 
     await api.settings.update(payload);
@@ -417,9 +559,12 @@ const App = {
     const form = e.target;
     const formData = new FormData(form);
 
+    const parsedTax = parseFloat(formData.get('defaultTaxRate'));
+    const parsedThreshold = parseInt(formData.get('lowStockThreshold'), 10);
+
     const payload = {
-      defaultTaxRate: parseFloat(formData.get('defaultTaxRate')) || 18,
-      lowStockThreshold: parseInt(formData.get('lowStockThreshold'), 10) || 10,
+      defaultTaxRate: Number.isNaN(parsedTax) ? 18 : Math.min(28, Math.max(0, parsedTax)),
+      lowStockThreshold: Number.isNaN(parsedThreshold) ? 10 : Math.max(1, parsedThreshold),
       theme: formData.get('theme')
     };
 
@@ -434,7 +579,9 @@ const App = {
     const link = document.createElement('a');
     link.href = url;
     link.download = `smart_inventory_backup_${Date.now()}.json`;
+    document.body.appendChild(link);
     link.click();
+    document.body.removeChild(link);
     URL.revokeObjectURL(url);
     this.showToast('Full database JSON exported!', 'success');
   },
@@ -464,43 +611,48 @@ const App = {
 
     if (!btn || !resultDiv) return;
 
+    const customUrl = urlInput.value.trim().replace(/\/$/, '');
     btn.disabled = true;
     btn.innerHTML = `<span class="loading-spinner" style="width: 14px; height: 14px; border-width: 2px;"></span> Connecting...`;
     resultDiv.style.display = 'block';
-    resultDiv.innerHTML = `<div style="font-size: 12.5px; color: var(--text-muted);">Attempting ping to ${urlInput.value}/dashboard/summary ...</div>`;
+    resultDiv.innerHTML = `<div style="font-size: 12.5px; color: var(--text-muted);">Attempting ping to ${escapeHtml(customUrl)}/health ...</div>`;
 
-    const customUrl = urlInput.value.trim().replace(/\/$/, '');
     const originalUrl = API_CONFIG.baseUrl;
     API_CONFIG.baseUrl = customUrl;
-
-    const res = await apiRequest('/dashboard/summary');
+    const res = await apiRequest('/health');
     API_CONFIG.baseUrl = originalUrl;
 
     btn.disabled = false;
     btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg> Test Connection`;
 
-    if (res.success && res.data) {
+    if (res.success) {
       resultDiv.innerHTML = `
         <div style="padding: 10px 14px; background: var(--color-success-bg); color: var(--color-success-text); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px; font-size: 12.5px;">
-          <strong>✓ Connection Established!</strong> ASP.NET Core Web API is live at <code>${customUrl}</code>. MongoDB Atlas database is online.
+          <strong>✓ Connection Established!</strong> ASP.NET Core Web API is live at <code>${escapeHtml(customUrl)}</code>. MongoDB Atlas database is online.
         </div>
       `;
       this.showToast('Successfully connected to ASP.NET Core API!', 'success');
     } else {
       resultDiv.innerHTML = `
         <div style="padding: 10px 14px; background: var(--color-warning-bg); color: var(--color-warning-text); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; font-size: 12.5px; line-height: 1.5;">
-          <strong>○ API Server in Standby:</strong> Could not connect to <code>${customUrl}</code>.<br/>
+          <strong>○ API Server in Standby:</strong> Could not connect to <code>${escapeHtml(customUrl)}</code> (${escapeHtml(res.error || 'offline')}).<br/>
           Run <code>dotnet run</code> inside <code>InventoryManagementSystem.Api/</code> or check CORS/firewall. System safely running with local storage data.
         </div>
       `;
     }
   },
 
-  resetDataToDefaults() {
-    if (confirm("Reset all inventory, sales, purchases, and products to initial seed data? This will overwrite recent modifications.")) {
+  async resetDataToDefaults() {
+    const confirmed = await this.confirmAction({
+      title: 'Reset to Seed Data',
+      message: 'Reset all inventory, sales, purchases, and products to initial seed data? This will overwrite recent modifications.',
+      confirmLabel: 'Reset Data',
+      danger: true
+    });
+    if (confirmed) {
       StorageService.resetToDefaults();
       this.showToast('System data reset to initial default Indian business data!', 'success');
-      this.navigateTo('dashboard');
+      await this.navigateTo('dashboard');
     }
   }
 };

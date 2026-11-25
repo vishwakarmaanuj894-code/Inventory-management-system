@@ -1,5 +1,7 @@
+using System.Text.RegularExpressions;
 using InventoryManagementSystem.Api.Data;
 using InventoryManagementSystem.Api.Models;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace InventoryManagementSystem.Api.Repositories
@@ -7,6 +9,7 @@ namespace InventoryManagementSystem.Api.Repositories
     public interface IPurchaseRepository
     {
         Task<Purchase?> GetByIdAsync(string id);
+        Task<Purchase?> GetByInvoiceNumberAsync(string invoiceNumber);
         Task<List<Purchase>> GetAllAsync();
         Task<List<Purchase>> GetBySupplierIdAsync(string supplierId);
         Task<List<Purchase>> GetByDateRangeAsync(DateTime? start, DateTime? end);
@@ -26,6 +29,13 @@ namespace InventoryManagementSystem.Api.Repositories
         public async Task<Purchase?> GetByIdAsync(string id)
         {
             return await _context.Purchases.Find(p => p.Id == id).FirstOrDefaultAsync();
+        }
+
+        public async Task<Purchase?> GetByInvoiceNumberAsync(string invoiceNumber)
+        {
+            var escaped = Regex.Escape(invoiceNumber.Trim());
+            var filter = Builders<Purchase>.Filter.Regex(p => p.InvoiceNumber, new BsonRegularExpression($"^{escaped}$", "i"));
+            return await _context.Purchases.Find(filter).FirstOrDefaultAsync();
         }
 
         public async Task<List<Purchase>> GetAllAsync()

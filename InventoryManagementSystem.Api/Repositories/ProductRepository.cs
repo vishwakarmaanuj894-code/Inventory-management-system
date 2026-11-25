@@ -1,12 +1,14 @@
+using System.Text.RegularExpressions;
 using InventoryManagementSystem.Api.Data;
 using InventoryManagementSystem.Api.Models;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace InventoryManagementSystem.Api.Repositories
 {
     public interface IProductRepository
     {
-        Task<Product?> GetByIdAsync(string id);
+        Task<Product?> GetByIdAsync(string id, IClientSessionHandle? session = null);
         Task<Product?> GetBySkuAsync(string sku);
         Task<List<Product>> GetAllAsync(string? search = null, string? categoryId = null, string? status = null);
         Task<List<Product>> GetLowStockAsync();
@@ -14,6 +16,7 @@ namespace InventoryManagementSystem.Api.Repositories
         Task CreateAsync(Product product, IClientSessionHandle? session = null);
         Task UpdateAsync(Product product, IClientSessionHandle? session = null);
         Task<bool> UpdateStockAtomicAsync(string productId, int quantityDelta, IClientSessionHandle? session = null);
+        Task UpdatePurchasePriceAsync(string productId, decimal purchasePrice, IClientSessionHandle? session = null);
         Task<bool> DeleteAsync(string id);
     }
 
@@ -26,14 +29,19 @@ namespace InventoryManagementSystem.Api.Repositories
             _context = context;
         }
 
-        public async Task<Product?> GetByIdAsync(string id)
+        public async Task<Product?> GetByIdAsync(string id, IClientSessionHandle? session = null)
         {
+            if (session != null)
+                return await _context.Products.Find(session, p => p.Id == id).FirstOrDefaultAsync();
+
             return await _context.Products.Find(p => p.Id == id).FirstOrDefaultAsync();
         }
 
         public async Task<Product?> GetBySkuAsync(string sku)
         {
-            return await _context.Products.Find(p => p.Sku.ToLower() == sku.ToLower()).FirstOrDefaultAsync();
+            var escapedSku = Regex.Escape(sku.Trim());
+            var filter = Builders<Product>.Filter.Regex(p => p.Sku, new BsonRegularExpression($"^{escapedSku}$", "i"));
+            return await _context.Products.Find(filter).FirstOrDefaultAsync();
         }
 
         public async Task<List<Product>> GetAllAsync(string? search = null, string? categoryId = null, string? status = null)
@@ -43,10 +51,12 @@ namespace InventoryManagementSystem.Api.Repositories
 
             if (!string.IsNullOrWhiteSpace(search))
             {
+                var escapedSearch = Regex.Escape(search.Trim());
+                var regex = new BsonRegularExpression(escapedSearch, "i");
                 var searchFilter = builder.Or(
-                    builder.Regex(p => p.Name, new MongoDB.Bson.BsonRegularExpression(search, "i")),
-                    builder.Regex(p => p.Sku, new MongoDB.Bson.BsonRegularExpression(search, "i")),
-                    builder.Regex(p => p.CategoryName, new MongoDB.Bson.BsonRegularExpression(search, "i"))
+                    builder.Regex(p => p.Name, regex),
+                    builder.Regex(p => p.Sku, regex),
+                    builder.Regex(p => p.CategoryName, regex)
                 );
                 filter &= searchFilter;
             }
@@ -102,7 +112,6 @@ namespace InventoryManagementSystem.Api.Repositories
         public async Task<bool> UpdateStockAtomicAsync(string productId, int quantityDelta, IClientSessionHandle? session = null)
         {
             var builder = Builders<Product>.Filter;
-            // If reducing stock (quantityDelta < 0), ensure current stock is >= abs(quantityDelta)
             FilterDefinition<Product> filter;
             if (quantityDelta < 0)
             {
@@ -121,25 +130,44 @@ namespace InventoryManagementSystem.Api.Repositories
                 .Inc(p => p.StockQuantity, quantityDelta)
                 .Set(p => p.UpdatedAt, DateTime.UtcNow);
 
-            UpdateResult res;
-            if (session != null)
-                res = await _context.Products.UpdateOneAsync(session, filter, update);
-            else
-                res = await _context.Products.UpdateOneAsync(filter, update);
-
-            if (res.ModifiedCount > 0)
+            var options = new FindOneAndUpdateOptions<Product>
             {
-                // Refresh status after atomic quantity change
-                var product = await GetByIdAsync(productId);
-                if (product != null)
-                {
-                    product.RecalculateStatus();
-                    await UpdateAsync(product, session);
-                }
-                return true;
+                ReturnDocument = ReturnDocument.After
+            };
+
+            Product? updatedProduct;
+            if (session != null)
+                updatedProduct = await _context.Products.FindOneAndUpdateAsync(session, filter, update, options);
+            else
+                updatedProduct = await _context.Products.FindOneAndUpdateAsync(filter, update, options);
+
+            if (updatedProduct == null)
+                return false;
+
+            var prevStatus = updatedProduct.Status;
+            updatedProduct.RecalculateStatus();
+            if (updatedProduct.Status != prevStatus)
+            {
+                var statusUpdate = Builders<Product>.Update.Set(p => p.Status, updatedProduct.Status);
+                if (session != null)
+                    await _context.Products.UpdateOneAsync(session, p => p.Id == productId, statusUpdate);
+                else
+                    await _context.Products.UpdateOneAsync(p => p.Id == productId, statusUpdate);
             }
 
-            return false;
+            return true;
+        }
+
+        public async Task UpdatePurchasePriceAsync(string productId, decimal purchasePrice, IClientSessionHandle? session = null)
+        {
+            var update = Builders<Product>.Update
+                .Set(p => p.PurchasePrice, purchasePrice)
+                .Set(p => p.UpdatedAt, DateTime.UtcNow);
+
+            if (session != null)
+                await _context.Products.UpdateOneAsync(session, p => p.Id == productId, update);
+            else
+                await _context.Products.UpdateOneAsync(p => p.Id == productId, update);
         }
 
         public async Task<bool> DeleteAsync(string id)

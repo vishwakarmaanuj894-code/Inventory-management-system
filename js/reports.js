@@ -16,16 +16,30 @@ const ReportsModule = {
     const container = document.getElementById('module-reports');
     if (!container) return;
 
-    const res = await api.reports.getSummary(this.activeDateRange);
-    const summary = res.data || {};
+    App.renderLoading(container, 'Generating executive reports...');
 
-    const productsRes = await api.products.getAll();
-    const products = productsRes.data || [];
+    try {
+      const [res, productsRes] = await Promise.all([
+        api.reports.getSummary(this.activeDateRange),
+        api.products.getAll()
+      ]);
 
-    this.summary = summary;
-    this.products = products;
+      if (!res || res.success === false) {
+        App.renderError(container, {
+          title: 'Failed to Load Reports',
+          message: res?.error || 'Could not generate financial reports from the API.',
+          retryAction: 'ReportsModule.render()'
+        });
+        return;
+      }
 
-    container.innerHTML = `
+      const summary = res.data || {};
+      const products = productsRes?.data || [];
+
+      this.summary = summary;
+      this.products = products;
+
+      container.innerHTML = `
       <div class="page-header">
         <div>
           <h1 class="page-title">Executive Reports & Financial Statements</h1>
@@ -124,6 +138,14 @@ const ReportsModule = {
       <!-- Dynamic Report View Table -->
       ${this.renderActiveReportTable()}
     `;
+    } catch (err) {
+      console.error('Reports render error:', err);
+      App.renderError(container, {
+        title: 'Reports Page Error',
+        message: err?.message || 'Unexpected error rendering financial reports.',
+        retryAction: 'ReportsModule.render()'
+      });
+    }
   },
 
   setReportType(type) {
@@ -179,10 +201,10 @@ const ReportsModule = {
                 <tr><td colspan="7" class="text-center" style="padding: 24px; color: var(--text-muted)">No sales recorded for this timeframe</td></tr>
               ` : sales.map(s => `
                 <tr>
-                  <td class="font-mono font-bold">${s.invoiceNumber}</td>
+                  <td class="font-mono font-bold">${escapeHtml(s.invoiceNumber)}</td>
                   <td class="font-mono text-muted" style="font-size: 12px;">${formatDate(s.createdAt)}</td>
-                  <td style="font-weight: 600;">${s.customerName || 'Walk-in'}</td>
-                  <td>${s.paymentMethod || 'UPI'}</td>
+                  <td style="font-weight: 600;">${escapeHtml(s.customerName || 'Walk-in')}</td>
+                  <td>${escapeHtml(s.paymentMethod || 'UPI')}</td>
                   <td class="text-right font-mono">${formatINR(s.subtotal)}</td>
                   <td class="text-right font-mono text-muted">${formatINR(s.taxAmount)}</td>
                   <td class="text-right font-mono font-bold text-brand-purple">${formatINR(s.grandTotal)}</td>
@@ -221,10 +243,10 @@ const ReportsModule = {
                 <tr><td colspan="7" class="text-center" style="padding: 24px; color: var(--text-muted)">No purchases recorded for this timeframe</td></tr>
               ` : purchases.map(p => `
                 <tr>
-                  <td class="font-mono font-bold">${p.invoiceNumber}</td>
+                  <td class="font-mono font-bold">${escapeHtml(p.invoiceNumber)}</td>
                   <td class="font-mono text-muted" style="font-size: 12px;">${formatDate(p.createdAt)}</td>
-                  <td style="font-weight: 600;">${p.supplierName}</td>
-                  <td>${p.paymentMethod || 'Bank Transfer'}</td>
+                  <td style="font-weight: 600;">${escapeHtml(p.supplierName)}</td>
+                  <td>${escapeHtml(p.paymentMethod || 'Bank Transfer')}</td>
                   <td class="text-right font-mono">${formatINR(p.subtotal)}</td>
                   <td class="text-right font-mono text-muted">${formatINR(p.taxAmount)}</td>
                   <td class="text-right font-mono font-bold text-brand-blue">${formatINR(p.grandTotal)}</td>
@@ -298,9 +320,9 @@ const ReportsModule = {
                 const salesValuation = p.stockQuantity * p.sellingPrice;
                 return `
                   <tr>
-                    <td style="font-weight: 600;">${p.name}</td>
-                    <td class="sku-code">${p.sku}</td>
-                    <td class="text-center font-mono font-bold">${p.stockQuantity} ${p.unit}</td>
+                    <td style="font-weight: 600;">${escapeHtml(p.name)}</td>
+                    <td class="sku-code">${escapeHtml(p.sku)}</td>
+                    <td class="text-center font-mono font-bold">${p.stockQuantity} ${escapeHtml(p.unit)}</td>
                     <td class="text-right font-mono text-muted">${formatINR(p.purchasePrice)}</td>
                     <td class="text-right font-mono">${formatINR(p.sellingPrice)}</td>
                     <td class="text-right font-mono font-bold">${formatINR(costValuation)}</td>
@@ -341,8 +363,8 @@ const ReportsModule = {
                 <tr><td colspan="7" class="text-center" style="padding: 24px; color: var(--text-muted)">No product sales recorded in this period</td></tr>
               ` : breakdown.map(p => `
                 <tr>
-                  <td style="font-weight: 600;">${p.name}</td>
-                  <td class="sku-code">${p.sku}</td>
+                  <td style="font-weight: 600;">${escapeHtml(p.name)}</td>
+                  <td class="sku-code">${escapeHtml(p.sku)}</td>
                   <td class="text-center font-mono font-bold">${p.unitsSold}</td>
                   <td class="text-right font-mono font-bold">${formatINR(p.revenue)}</td>
                   <td class="text-right font-mono text-muted">${formatINR(p.cost)}</td>
@@ -357,77 +379,92 @@ const ReportsModule = {
     `;
   },
 
+  csvCell(value) {
+    const str = String(value ?? '');
+    return `"${str.replace(/"/g, '""')}"`;
+  },
+
   exportCSV() {
-    let filename = `SmartInventory_${this.activeReportType}_${this.activeDateRange}_${Date.now()}.csv`;
-    let rows = [];
+    const filename = `SmartInventory_${this.activeReportType}_${this.activeDateRange}_${Date.now()}.csv`;
+    const rows = [];
 
     if (this.activeReportType === 'sales') {
-      rows.push(['Invoice Number', 'Date', 'Customer Name', 'Phone', 'Payment Mode', 'Subtotal', 'Tax Rate', 'Tax Amount', 'Grand Total']);
+      rows.push(['Invoice Number', 'Date', 'Customer Name', 'Phone', 'Payment Mode', 'Subtotal', 'Tax Rate', 'Tax Amount', 'Grand Total'].map(this.csvCell));
       (this.summary.sales || []).forEach(s => {
         rows.push([
-          `"${s.invoiceNumber}"`,
-          `"${s.createdAt}"`,
-          `"${s.customerName || ''}"`,
-          `"${s.customerPhone || ''}"`,
-          `"${s.paymentMethod || ''}"`,
-          s.subtotal,
-          s.taxRate,
-          s.taxAmount,
-          s.grandTotal
+          this.csvCell(s.invoiceNumber),
+          this.csvCell(s.createdAt),
+          this.csvCell(s.customerName || ''),
+          this.csvCell(s.customerPhone || ''),
+          this.csvCell(s.paymentMethod || ''),
+          s.subtotal ?? 0,
+          s.taxRate ?? 0,
+          s.taxAmount ?? 0,
+          s.grandTotal ?? 0
         ]);
       });
     } else if (this.activeReportType === 'purchases') {
-      rows.push(['PO Number', 'Date', 'Supplier Name', 'Payment Mode', 'Subtotal', 'Tax Rate', 'Tax Amount', 'Grand Total']);
+      rows.push(['PO Number', 'Date', 'Supplier Name', 'Payment Mode', 'Subtotal', 'Tax Rate', 'Tax Amount', 'Grand Total'].map(this.csvCell));
       (this.summary.purchases || []).forEach(p => {
         rows.push([
-          `"${p.invoiceNumber}"`,
-          `"${p.createdAt}"`,
-          `"${p.supplierName || ''}"`,
-          `"${p.paymentMethod || ''}"`,
-          p.subtotal,
-          p.taxRate,
-          p.taxAmount,
-          p.grandTotal
+          this.csvCell(p.invoiceNumber),
+          this.csvCell(p.createdAt),
+          this.csvCell(p.supplierName || ''),
+          this.csvCell(p.paymentMethod || ''),
+          p.subtotal ?? 0,
+          p.taxRate ?? 0,
+          p.taxAmount ?? 0,
+          p.grandTotal ?? 0
         ]);
       });
+    } else if (this.activeReportType === 'profit') {
+      const s = this.summary || {};
+      rows.push(['Metric', 'Value'].map(this.csvCell));
+      rows.push([this.csvCell('Timeframe'), this.csvCell(this.activeDateRange)]);
+      rows.push([this.csvCell('Total Sales Invoiced (Gross Revenue)'), s.totalSalesRevenue ?? 0]);
+      rows.push([this.csvCell('Cost of Goods Sold (COGS)'), s.cogs ?? 0]);
+      rows.push([this.csvCell('Gross Operational Profit'), s.estimatedProfit ?? 0]);
+      rows.push([this.csvCell('Gross Margin %'), `${s.profitMargin ?? 0}%`]);
     } else if (this.activeReportType === 'inventory') {
-      rows.push(['Product Name', 'SKU', 'Category', 'Stock Quantity', 'Unit', 'Purchase Price', 'Selling Price', 'Inventory Cost Valuation']);
+      rows.push(['Product Name', 'SKU', 'Category', 'Stock Quantity', 'Unit', 'Purchase Price', 'Selling Price', 'Inventory Cost Valuation'].map(this.csvCell));
       this.products.forEach(p => {
         rows.push([
-          `"${p.name}"`,
-          `"${p.sku}"`,
-          `"${p.categoryName || ''}"`,
-          p.stockQuantity,
-          `"${p.unit || 'pcs'}"`,
-          p.purchasePrice,
-          p.sellingPrice,
-          p.stockQuantity * p.purchasePrice
+          this.csvCell(p.name),
+          this.csvCell(p.sku),
+          this.csvCell(p.categoryName || ''),
+          p.stockQuantity ?? 0,
+          this.csvCell(p.unit || 'pcs'),
+          p.purchasePrice ?? 0,
+          p.sellingPrice ?? 0,
+          (p.stockQuantity ?? 0) * (p.purchasePrice ?? 0)
         ]);
       });
     } else {
       // Product-wise breakdown
-      rows.push(['Product Name', 'SKU', 'Units Sold', 'Revenue (INR)', 'Cost (INR)', 'Gross Profit (INR)', 'Margin %']);
+      rows.push(['Product Name', 'SKU', 'Units Sold', 'Revenue (INR)', 'Cost (INR)', 'Gross Profit (INR)', 'Margin %'].map(this.csvCell));
       (this.summary.productBreakdown || []).forEach(p => {
         rows.push([
-          `"${p.name}"`,
-          `"${p.sku}"`,
-          p.unitsSold,
-          p.revenue,
-          p.cost,
-          p.profit,
-          p.margin
+          this.csvCell(p.name),
+          this.csvCell(p.sku),
+          p.unitsSold ?? 0,
+          p.revenue ?? 0,
+          p.cost ?? 0,
+          p.profit ?? 0,
+          p.margin ?? 0
         ]);
       });
     }
 
-    const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", filename);
+    const csvText = rows.map(row => row.join(',')).join('\n');
+    const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
 
     App.showToast(`CSV report downloaded: ${filename}`, 'success');
   }

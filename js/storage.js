@@ -54,6 +54,15 @@ function formatDateTime(dateInput) {
   });
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Initial Seed Data
 const DEFAULT_SETTINGS = {
   companyName: "Bharat Smart Logistics & Retail Pvt Ltd",
@@ -76,7 +85,7 @@ const DEFAULT_USERS = [
     _id: "user_admin_01",
     name: "Rajesh Sharma",
     email: "admin@smartinventory.in",
-    role: "System Administrator",
+    role: "Administrator",
     companyName: "Bharat Smart Logistics & Retail Pvt Ltd",
     avatar: "RS",
     createdAt: "2026-01-10T10:00:00Z"
@@ -773,3 +782,4 @@ window.generateId = generateId;
 window.formatINR = formatINR;
 window.formatDate = formatDate;
 window.formatDateTime = formatDateTime;
+window.escapeHtml = escapeHtml;

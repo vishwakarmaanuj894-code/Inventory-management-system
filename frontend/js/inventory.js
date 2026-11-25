@@ -15,32 +15,50 @@ const InventoryModule = {
     const container = document.getElementById('module-inventory');
     if (!container) return;
 
-    const [stockRes, txRes] = await Promise.all([
-      api.inventory.getStockList(this.activeTab === 'transactions' ? 'all' : this.activeTab),
-      api.inventory.getTransactions()
-    ]);
+    App.renderLoading(container, 'Loading warehouse stock audit...');
 
-    const products = stockRes.data || [];
-    const transactions = (txRes.data || []).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    try {
+      const [productsRes, txRes] = await Promise.all([
+        api.products.getAll(),
+        api.inventory.getTransactions()
+      ]);
 
-    this.products = products;
+      if (!productsRes || productsRes.success === false) {
+        App.renderError(container, {
+          title: 'Failed to Load Inventory',
+          message: productsRes?.error || 'Could not retrieve inventory stock from the API.',
+          retryAction: 'InventoryModule.render()'
+        });
+        return;
+      }
 
-    const inStockCount = products.filter(p => p.status === 'in_stock').length;
-    const lowStockCount = products.filter(p => p.status === 'low_stock').length;
-    const outOfStockCount = products.filter(p => p.status === 'out_of_stock').length;
+      const allProducts = productsRes.data || [];
+      const transactions = (txRes?.data || []).sort((a, b) => (new Date(b.timestamp || 0).getTime() || 0) - (new Date(a.timestamp || 0).getTime() || 0));
 
-    container.innerHTML = `
+      this.products = allProducts;
+
+      const lowStockCount = allProducts.filter(p => p.status === 'low_stock').length;
+      const outOfStockCount = allProducts.filter(p => p.status === 'out_of_stock').length;
+
+      let displayedProducts = allProducts;
+      if (this.activeTab === 'low') {
+        displayedProducts = allProducts.filter(p => p.status === 'low_stock');
+      } else if (this.activeTab === 'out') {
+        displayedProducts = allProducts.filter(p => p.status === 'out_of_stock');
+      }
+
+      container.innerHTML = `
       <div class="page-header">
         <div>
           <h1 class="page-title">Warehouse Stock Control & Audit</h1>
           <p class="page-subtitle">Track available inventory, audit stock movements, adjust counts with reason codes, and log transactions.</p>
         </div>
         <div class="page-actions">
-          <button class="btn btn-secondary" onclick="InventoryModule.openAdjustmentModal()">
+          <button type="button" class="btn btn-secondary" onclick="InventoryModule.openAdjustmentModal()">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
             Adjust Stock
           </button>
-          <button class="btn btn-primary" onclick="PurchasesModule.openNewPurchaseModal()">
+          <button type="button" class="btn btn-primary" onclick="PurchasesModule.openNewPurchaseModal()">
             + Inward Procurement
           </button>
         </div>
@@ -49,29 +67,37 @@ const InventoryModule = {
       <!-- Segmented Navigation Filter Tabs -->
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;">
         <div class="segmented-tabs">
-          <button class="segmented-tab ${this.activeTab === 'all' ? 'active' : ''}" onclick="InventoryModule.switchTab('all')">
-            All Inventory (${products.length})
+          <button type="button" class="segmented-tab ${this.activeTab === 'all' ? 'active' : ''}" onclick="InventoryModule.switchTab('all')">
+            All Inventory (${allProducts.length})
           </button>
-          <button class="segmented-tab ${this.activeTab === 'low' ? 'active' : ''}" onclick="InventoryModule.switchTab('low')">
+          <button type="button" class="segmented-tab ${this.activeTab === 'low' ? 'active' : ''}" onclick="InventoryModule.switchTab('low')">
             Low Stock Alert (${lowStockCount})
           </button>
-          <button class="segmented-tab ${this.activeTab === 'out' ? 'active' : ''}" onclick="InventoryModule.switchTab('out')">
+          <button type="button" class="segmented-tab ${this.activeTab === 'out' ? 'active' : ''}" onclick="InventoryModule.switchTab('out')">
             Out of Stock (${outOfStockCount})
           </button>
-          <button class="segmented-tab ${this.activeTab === 'transactions' ? 'active' : ''}" onclick="InventoryModule.switchTab('transactions')">
+          <button type="button" class="segmented-tab ${this.activeTab === 'transactions' ? 'active' : ''}" onclick="InventoryModule.switchTab('transactions')">
             Movement Log (${transactions.length})
           </button>
         </div>
 
         <div style="font-size: 13px; color: var(--text-muted);">
-          Total items tracked: <strong class="font-mono text-primary">${products.length}</strong>
+          Total items tracked: <strong class="font-mono text-primary">${allProducts.length}</strong>
         </div>
       </div>
 
-      ${this.activeTab === 'transactions' ? this.renderTransactionsView(transactions) : this.renderStockTableView(products)}
+      ${this.activeTab === 'transactions' ? this.renderTransactionsView(transactions) : this.renderStockTableView(displayedProducts)}
 
       <div id="inventory-modal-root"></div>
     `;
+    } catch (err) {
+      console.error('Inventory render error:', err);
+      App.renderError(container, {
+        title: 'Inventory Page Error',
+        message: err?.message || 'Unexpected error rendering warehouse stock control.',
+        retryAction: 'InventoryModule.render()'
+      });
+    }
   },
 
   switchTab(tab) {
@@ -118,18 +144,18 @@ const InventoryModule = {
                     <td>
                       <div class="product-item-cell">
                         <div class="product-img-box">
-                          <img src="${p.imageUrl}" alt="${p.name}" onerror="this.src='https://placehold.co/100x100?text=Item'" />
+                          <img src="${escapeHtml(p.imageUrl)}" alt="${escapeHtml(p.name)}" onerror="this.src='https://placehold.co/100x100?text=Item'" />
                         </div>
                         <div>
-                          <div class="product-cell-name">${p.name}</div>
-                          <div class="product-cell-sku sku-code">${p.sku} · ${p.unit}</div>
+                          <div class="product-cell-name">${escapeHtml(p.name)}</div>
+                          <div class="product-cell-sku sku-code">${escapeHtml(p.sku)} · ${escapeHtml(p.unit)}</div>
                         </div>
                       </div>
                     </td>
-                    <td>${p.categoryName || '-'}</td>
+                    <td>${escapeHtml(p.categoryName || '-')}</td>
                     <td class="text-right font-mono text-muted">${formatINR(p.purchasePrice)}</td>
                     <td class="text-center font-mono font-bold" style="font-size: 15px; color: ${p.stockQuantity === 0 ? 'var(--color-danger)' : p.stockQuantity <= p.minStockLevel ? 'var(--color-warning)' : 'var(--text-primary)'}">
-                      ${p.stockQuantity} ${p.unit}
+                      ${p.stockQuantity} ${escapeHtml(p.unit)}
                     </td>
                     <td class="text-center font-mono text-muted">${p.minStockLevel}</td>
                     <td class="text-right font-mono font-bold">${formatINR(valuation)}</td>
@@ -138,7 +164,7 @@ const InventoryModule = {
                     </td>
                     <td class="text-right">
                       <div class="table-actions">
-                        <button class="btn btn-outline btn-sm" onclick="InventoryModule.openAdjustmentModal('${p._id}')" title="Adjust quantity">
+                        <button type="button" class="btn btn-outline btn-sm" onclick="InventoryModule.openAdjustmentModal('${escapeHtml(p._id)}')" title="Adjust quantity">
                           Adjust
                         </button>
                       </div>
@@ -194,11 +220,11 @@ const InventoryModule = {
                   <tr>
                     <td class="font-mono text-muted" style="font-size: 12px;">${formatDateTime(tx.timestamp)}</td>
                     <td>
-                      <span class="badge ${badgeClass}">${tx.type}</span>
+                      <span class="badge ${badgeClass}">${escapeHtml(tx.type)}</span>
                     </td>
                     <td>
-                      <div style="font-weight: 600;">${tx.productName}</div>
-                      <div class="sku-code">${tx.sku}</div>
+                      <div style="font-weight: 600;">${escapeHtml(tx.productName)}</div>
+                      <div class="sku-code">${escapeHtml(tx.sku)}</div>
                     </td>
                     <td class="text-center font-mono font-bold" style="color: ${tx.quantity < 0 ? 'var(--color-danger)' : 'var(--color-success)'}">
                       ${sign}${tx.quantity}
@@ -207,10 +233,10 @@ const InventoryModule = {
                       <span style="color: var(--text-muted);">${tx.previousStock}</span> → <strong>${tx.newStock}</strong>
                     </td>
                     <td>
-                      <strong class="font-mono" style="font-size: 12px;">${tx.referenceId}</strong>
+                      <strong class="font-mono" style="font-size: 12px;">${escapeHtml(tx.referenceId)}</strong>
                     </td>
                     <td style="font-size: 12.5px; color: var(--text-secondary); max-width: 250px;">
-                      ${tx.notes || '-'}
+                      ${escapeHtml(tx.notes || '-')}
                     </td>
                   </tr>
                 `;
@@ -242,7 +268,7 @@ const InventoryModule = {
               <h3 class="modal-title">Manual Stock Adjustment</h3>
               <div style="font-size: 12px; color: var(--text-muted);">Record damage, loss, return, or physical warehouse audit correction</div>
             </div>
-            <button class="btn btn-ghost btn-icon-only" onclick="InventoryModule.closeModal()">✕</button>
+            <button type="button" class="btn btn-ghost btn-icon-only" onclick="InventoryModule.closeModal()">✕</button>
           </div>
           <form onsubmit="InventoryModule.saveAdjustment(event)">
             <div class="modal-body">
@@ -250,8 +276,8 @@ const InventoryModule = {
                 <label class="form-label required">Select Product</label>
                 <select name="productId" class="form-control" id="adjust-prod-select" onchange="InventoryModule.updateStockPreview(this.value)">
                   ${products.map(p => `
-                    <option value="${p._id}" data-stock="${p.stockQuantity}" ${p._id === defaultProd._id ? 'selected' : ''}>
-                      ${p.name} (Current: ${p.stockQuantity} ${p.unit})
+                    <option value="${escapeHtml(p._id)}" data-stock="${p.stockQuantity}" ${p._id === defaultProd._id ? 'selected' : ''}>
+                      ${escapeHtml(p.name)} (Current: ${p.stockQuantity} ${escapeHtml(p.unit)})
                     </option>
                   `).join('')}
                 </select>
@@ -324,8 +350,10 @@ const InventoryModule = {
 
     const selectedOption = prodSelect.options[prodSelect.selectedIndex];
     const currentStock = parseInt(selectedOption.getAttribute('data-stock'), 10) || 0;
-    const qty = parseInt(qtyInput.value, 10) || 0;
     const type = typeSelect.value;
+    qtyInput.min = type === 'set' ? '0' : '1';
+    const parsedQty = parseInt(qtyInput.value, 10);
+    const qty = Number.isFinite(parsedQty) ? parsedQty : 0;
 
     let newStock = currentStock;
     if (type === 'add') {
@@ -354,22 +382,52 @@ const InventoryModule = {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
+    const submitBtn = form.querySelector('button[type="submit"]');
 
     const productId = formData.get('productId');
     const adjustmentType = formData.get('adjustmentType');
-    const quantity = parseInt(formData.get('quantity'), 10) || 0;
-    const reason = formData.get('reason');
-    const notes = formData.get('notes');
+    const quantity = parseInt(formData.get('quantity'), 10);
+    const reason = (formData.get('reason') || '').trim();
+    const notes = (formData.get('notes') || '').trim();
 
-    const res = await api.inventory.adjustStock(productId, adjustmentType, quantity, reason, notes);
-    if (res.success) {
-      App.showToast("Stock adjusted and audit transaction logged successfully!", "success");
-      this.closeModal();
-      await this.render();
-      DashboardModule.render();
-      ProductsModule.render();
-    } else {
-      App.showToast(res.error || "Failed to adjust stock", "error");
+    if (!Number.isFinite(quantity) || (adjustmentType === 'set' ? quantity < 0 : quantity <= 0)) {
+      App.showToast(adjustmentType === 'set' ? 'Physical stock count must be 0 or greater.' : 'Adjustment quantity must be greater than zero.', 'warning');
+      return;
+    }
+
+    if (!reason) {
+      App.showToast('Please select a reason for the stock adjustment.', 'warning');
+      return;
+    }
+
+    const targetProd = (this.products || []).find(p => p._id === productId);
+    if (targetProd && adjustmentType === 'subtract' && targetProd.stockQuantity - quantity < 0) {
+      App.showToast('Adjustment would result in negative stock, which is not permitted.', 'error');
+      return;
+    }
+
+    const origText = submitBtn ? submitBtn.innerHTML : '';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Applying...';
+    }
+
+    try {
+      const res = await api.inventory.adjustStock(productId, adjustmentType, quantity, reason, notes);
+      if (res.success) {
+        App.showToast("Stock adjusted and audit transaction logged successfully!", "success");
+        this.closeModal();
+        await this.render();
+        DashboardModule.render();
+        ProductsModule.render();
+      } else {
+        App.showToast(res.error || "Failed to adjust stock", "error");
+      }
+    } finally {
+      if (submitBtn && document.body.contains(submitBtn)) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = origText;
+      }
     }
   }
 };

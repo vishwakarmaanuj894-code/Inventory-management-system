@@ -52,7 +52,11 @@ namespace InventoryManagementSystem.Api.Services
             await _userRepository.UpdateAsync(user);
 
             var tokenHandler = new JwtSecurityTokenHandler();
-            var secret = _configuration["JwtSettings:Secret"] ?? "SmartInventorySuperSecureKey2026PhaseTwoEnterpriseJwtTokenAuth!";
+            var secret = Environment.GetEnvironmentVariable("JWT_SECRET") ?? _configuration["JwtSettings:Secret"];
+            if (string.IsNullOrWhiteSpace(secret) || secret.StartsWith("REPLACE_WITH_", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("JWT secret is not configured.");
+            }
             var key = Encoding.UTF8.GetBytes(secret);
 
             var issuer = _configuration["JwtSettings:Issuer"] ?? "SmartInventoryApi";

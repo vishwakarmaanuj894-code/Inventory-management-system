@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Login - Smart Inventory Management System</title>
   <meta name="description" content="Sign in to your Smart Inventory Management System dashboard." />
+  <link rel="icon" href="/favicon.ico" />
   <link rel="stylesheet" href="/css/style.css" />
   <style>
     .auth-page {
@@ -92,6 +93,8 @@
         </button>
       </div>
 
+      <div id="login-alert" role="alert" style="display: none; padding: 10px 14px; border-radius: var(--radius-md); font-size: 12.5px; font-weight: 500; margin-bottom: 16px;"></div>
+
       <form id="login-form" onsubmit="handleLogin(event)">
         <div class="form-group">
           <label class="form-label required">Email Address</label>
@@ -108,7 +111,7 @@
             <input type="checkbox" checked />
             <span class="text-secondary">Keep me signed in</span>
           </label>
-          <a href="javascript:void(0)" onclick="alert('For demo environment, use admin@smartinventory.in / admin123')" style="color: var(--color-primary); font-weight: 500;">Forgot Password?</a>
+          <a href="javascript:void(0)" onclick="showLoginAlert('For demo environment, use admin@smartinventory.in / admin123', 'info')" style="color: var(--color-primary); font-weight: 500;">Forgot Password?</a>
         </div>
 
         <button type="submit" class="btn btn-primary btn-lg" style="width: 100%;">
@@ -120,16 +123,40 @@
 
   <div id="toast-container"></div>
 
+  <script src="/js/config.js"></script>
   <script src="/js/storage.js"></script>
   <script src="/js/api.js"></script>
   <script>
+    function showLoginAlert(message, type = 'error') {
+      const box = document.getElementById('login-alert');
+      if (!box) return;
+      box.style.display = 'block';
+      if (type === 'info') {
+        box.style.backgroundColor = 'var(--color-info-bg, #eff6ff)';
+        box.style.color = 'var(--color-info-text, #1e40af)';
+        box.style.border = '1px solid rgba(59, 130, 246, 0.25)';
+      } else {
+        box.style.backgroundColor = 'var(--color-danger-bg, #fef2f2)';
+        box.style.color = 'var(--color-danger-text, #991b1b)';
+        box.style.border = '1px solid rgba(239, 68, 68, 0.25)';
+      }
+      box.textContent = message;
+    }
+
+    function hideLoginAlert() {
+      const box = document.getElementById('login-alert');
+      if (box) box.style.display = 'none';
+    }
+
     function fillDemoCredentials() {
       document.getElementById('email').value = 'admin@smartinventory.in';
       document.getElementById('password').value = 'admin123';
+      hideLoginAlert();
     }
 
     async function handleLogin(e) {
       e.preventDefault();
+      hideLoginAlert();
       const btn = e.target.querySelector('button[type="submit"]');
       const email = document.getElementById('email').value.trim();
       const password = document.getElementById('password').value.trim();
@@ -148,12 +175,12 @@
         } else {
           btn.disabled = false;
           btn.innerHTML = origText;
-          alert(res.error || "Invalid login credentials. Please use admin@smartinventory.in");
+          showLoginAlert(res.error || "Invalid login credentials. Please use admin@smartinventory.in", 'error');
         }
       } catch (err) {
         btn.disabled = false;
         btn.innerHTML = origText;
-        alert("Authentication failed: " + err.message);
+        showLoginAlert("Authentication failed: " + err.message, 'error');
       }
     }
   </script>

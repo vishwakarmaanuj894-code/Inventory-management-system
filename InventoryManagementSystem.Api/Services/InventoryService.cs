@@ -144,12 +144,16 @@ namespace InventoryManagementSystem.Api.Services
                     return ApiResponse<StockTransactionResponseDto>.Fail("Invalid adjustment type. Use 'add', 'subtract', or 'set'.");
             }
 
-            // Update product stock and status
-            product.StockQuantity = newStock;
-            product.RecalculateStatus();
-            product.UpdatedAt = DateTime.UtcNow;
-
-            await _productRepository.UpdateAsync(product);
+            if (delta != 0)
+            {
+                var updated = await _productRepository.UpdateStockAtomicAsync(product.Id, delta);
+                if (!updated)
+                {
+                    return ApiResponse<StockTransactionResponseDto>.Fail(
+                        $"Stock adjustment failed due to concurrent stock change on '{product.Name}'. Please refresh and try again."
+                    );
+                }
+            }
 
             // Log immutable audit transaction
             var transaction = new StockTransaction

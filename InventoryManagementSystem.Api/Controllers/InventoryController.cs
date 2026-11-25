@@ -8,6 +8,7 @@ namespace InventoryManagementSystem.Api.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class InventoryController : ControllerBase
     {
         private readonly IInventoryService _inventoryService;
@@ -46,7 +47,8 @@ namespace InventoryManagementSystem.Api.Controllers
         [ProducesResponseType(typeof(ApiResponse<List<StockTransactionResponseDto>>), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetTransactions([FromQuery] int limit = 200)
         {
-            var result = await _inventoryService.GetTransactionsAsync(limit);
+            var clampedLimit = Math.Clamp(limit, 1, 1000);
+            var result = await _inventoryService.GetTransactionsAsync(clampedLimit);
             return Ok(result);
         }
 

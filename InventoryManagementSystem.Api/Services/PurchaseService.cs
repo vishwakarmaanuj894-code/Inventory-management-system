@@ -9,7 +9,7 @@ namespace InventoryManagementSystem.Api.Services
 {
     public interface IPurchaseService
     {
-        Task<ApiResponse<List<PurchaseResponseDto>>> GetAllAsync();
+        Task<ApiResponse<List<PurchaseResponseDto>>> GetAllAsync(string? supplierId = null);
         Task<ApiResponse<PurchaseResponseDto>> GetByIdAsync(string id);
         Task<ApiResponse<PurchaseResponseDto>> CreateAsync(PurchaseCreateDto dto);
     }
@@ -39,9 +39,11 @@ namespace InventoryManagementSystem.Api.Services
             _logger = logger;
         }
 
-        public async Task<ApiResponse<List<PurchaseResponseDto>>> GetAllAsync()
+        public async Task<ApiResponse<List<PurchaseResponseDto>>> GetAllAsync(string? supplierId = null)
         {
-            var purchases = await _purchaseRepository.GetAllAsync();
+            var purchases = !string.IsNullOrWhiteSpace(supplierId)
+                ? await _purchaseRepository.GetBySupplierIdAsync(supplierId)
+                : await _purchaseRepository.GetAllAsync();
             var dtos = purchases.Select(MapToResponse).ToList();
             return ApiResponse<List<PurchaseResponseDto>>.Ok(dtos);
         }
@@ -64,8 +66,17 @@ namespace InventoryManagementSystem.Api.Services
             if (supplier == null)
                 return ApiResponse<PurchaseResponseDto>.Fail("Selected supplier does not exist.");
 
+            var invoiceNumber = string.IsNullOrWhiteSpace(dto.InvoiceNumber)
+                ? $"PUR-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}"
+                : dto.InvoiceNumber.Trim();
+
+            var existingInvoice = await _purchaseRepository.GetByInvoiceNumberAsync(invoiceNumber);
+            if (existingInvoice != null)
+                return ApiResponse<PurchaseResponseDto>.Fail($"Purchase invoice number '{invoiceNumber}' already exists.");
+
             // 1. Validate all products and calculate line totals on the server
             var validatedItems = new List<PurchaseItem>();
+            var productMap = new Dictionary<string, Product>();
             var productList = new List<Product>();
             decimal subtotal = 0m;
 
@@ -77,9 +88,13 @@ namespace InventoryManagementSystem.Api.Services
                 if (itemDto.PurchasePrice <= 0)
                     return ApiResponse<PurchaseResponseDto>.Fail($"Purchase price for product {itemDto.ProductId} must be positive.");
 
-                var product = await _productRepository.GetByIdAsync(itemDto.ProductId);
-                if (product == null)
-                    return ApiResponse<PurchaseResponseDto>.Fail($"Product with ID '{itemDto.ProductId}' was not found.");
+                if (!productMap.TryGetValue(itemDto.ProductId, out var product))
+                {
+                    product = await _productRepository.GetByIdAsync(itemDto.ProductId);
+                    if (product == null)
+                        return ApiResponse<PurchaseResponseDto>.Fail($"Product with ID '{itemDto.ProductId}' was not found.");
+                    productMap[itemDto.ProductId] = product;
+                }
 
                 var lineTotal = itemDto.Quantity * itemDto.PurchasePrice;
                 subtotal += lineTotal;
@@ -101,11 +116,9 @@ namespace InventoryManagementSystem.Api.Services
             var taxRate = Math.Clamp(dto.TaxRate, 0m, 28m);
             var taxAmount = Math.Round((subtotal * taxRate) / 100m, 2);
             var discount = Math.Max(0m, dto.Discount);
+            if (discount > subtotal + taxAmount)
+                return ApiResponse<PurchaseResponseDto>.Fail("Discount cannot exceed the purchase invoice total.");
             var grandTotal = Math.Max(0m, subtotal + taxAmount - discount);
-
-            var invoiceNumber = string.IsNullOrWhiteSpace(dto.InvoiceNumber)
-                ? $"PUR-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}"
-                : dto.InvoiceNumber.Trim();
 
             var purchase = new Purchase
             {
@@ -118,19 +131,19 @@ namespace InventoryManagementSystem.Api.Services
                 TaxAmount = taxAmount,
                 Discount = discount,
                 GrandTotal = grandTotal,
-                PaymentMethod = string.IsNullOrWhiteSpace(dto.PaymentMethod) ? "Bank Transfer" : dto.PaymentMethod,
+                PaymentMethod = string.IsNullOrWhiteSpace(dto.PaymentMethod) ? "Bank Transfer" : dto.PaymentMethod.Trim(),
                 Status = "Completed",
-                Notes = dto.Notes.Trim(),
+                Notes = (dto.Notes ?? string.Empty).Trim(),
                 CreatedAt = DateTime.UtcNow
             };
 
+            var runningStock = productMap.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.StockQuantity);
+
             // 2. Multi-document transaction with compensation fallback
-            // MongoDB Atlas supports multi-document transactions across replica set clusters.
             var session = await _context.StartSessionAsync();
 
             if (session != null)
             {
-                // Multi-document ACID transaction available on MongoDB Atlas
                 try
                 {
                     session.StartTransaction();
@@ -141,15 +154,12 @@ namespace InventoryManagementSystem.Api.Services
                     {
                         var item = validatedItems[i];
                         var prod = productList[i];
-                        var prevStock = prod.StockQuantity;
+                        var prevStock = runningStock[prod.Id];
                         var newStock = prevStock + item.Quantity;
+                        runningStock[prod.Id] = newStock;
 
-                        prod.StockQuantity = newStock;
-                        prod.PurchasePrice = item.PurchasePrice; // Update latest cost
-                        prod.RecalculateStatus();
-                        prod.UpdatedAt = DateTime.UtcNow;
-
-                        await _productRepository.UpdateAsync(prod, session);
+                        await _productRepository.UpdateStockAtomicAsync(prod.Id, item.Quantity, session);
+                        await _productRepository.UpdatePurchasePriceAsync(prod.Id, item.PurchasePrice, session);
 
                         await _stockTransactionRepository.CreateAsync(new StockTransaction
                         {
@@ -182,8 +192,7 @@ namespace InventoryManagementSystem.Api.Services
             }
             else
             {
-                // Fallback for standalone dev environments: sequential atomic writes with compensation logging
-                _logger.LogWarning("MongoDB standalone detected. Executing compensated sequential operations for purchase {InvoiceNumber}.", invoiceNumber);
+                _logger.LogWarning("MongoDB standalone detected. Executing sequential operations for purchase {InvoiceNumber}.", invoiceNumber);
 
                 await _purchaseRepository.CreateAsync(purchase);
 
@@ -191,10 +200,12 @@ namespace InventoryManagementSystem.Api.Services
                 {
                     var item = validatedItems[i];
                     var prod = productList[i];
-                    var prevStock = prod.StockQuantity;
+                    var prevStock = runningStock[prod.Id];
+                    var newStock = prevStock + item.Quantity;
+                    runningStock[prod.Id] = newStock;
 
-                    // Atomic increment
                     await _productRepository.UpdateStockAtomicAsync(prod.Id, item.Quantity);
+                    await _productRepository.UpdatePurchasePriceAsync(prod.Id, item.PurchasePrice);
 
                     await _stockTransactionRepository.CreateAsync(new StockTransaction
                     {
@@ -204,7 +215,7 @@ namespace InventoryManagementSystem.Api.Services
                         Type = "PURCHASE",
                         Quantity = item.Quantity,
                         PreviousStock = prevStock,
-                        NewStock = prevStock + item.Quantity,
+                        NewStock = newStock,
                         ReferenceId = invoiceNumber,
                         Notes = $"Inward purchase consignment from {supplier.Company}",
                         Timestamp = DateTime.UtcNow

@@ -57,8 +57,18 @@ namespace InventoryManagementSystem.Api.Services
             if (dto.Items == null || dto.Items.Count == 0)
                 return ApiResponse<SaleResponseDto>.Fail("Sales invoice must contain at least one item.");
 
-            // 1. Verify available stock and calculate cost basis on the server
+            var invoiceNumber = string.IsNullOrWhiteSpace(dto.InvoiceNumber)
+                ? $"INV-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}"
+                : dto.InvoiceNumber.Trim();
+
+            var existingInvoice = await _saleRepository.GetByInvoiceNumberAsync(invoiceNumber);
+            if (existingInvoice != null)
+                return ApiResponse<SaleResponseDto>.Fail($"Sales invoice number '{invoiceNumber}' already exists.");
+
+            // 1. Verify available stock (aggregated across duplicate product lines) and calculate cost basis on the server
             var validatedItems = new List<SaleItem>();
+            var productMap = new Dictionary<string, Product>();
+            var requestedQtyByProduct = new Dictionary<string, int>();
             var productList = new List<Product>();
             decimal subtotal = 0m;
             decimal totalCostBasis = 0m;
@@ -68,22 +78,29 @@ namespace InventoryManagementSystem.Api.Services
                 if (itemDto.Quantity <= 0)
                     return ApiResponse<SaleResponseDto>.Fail($"Quantity for product {itemDto.ProductId} must be at least 1.");
 
-                var product = await _productRepository.GetByIdAsync(itemDto.ProductId);
-                if (product == null)
-                    return ApiResponse<SaleResponseDto>.Fail($"Product with ID '{itemDto.ProductId}' was not found.");
+                if (itemDto.CustomSellingPrice.HasValue && itemDto.CustomSellingPrice.Value <= 0)
+                    return ApiResponse<SaleResponseDto>.Fail($"Custom selling price for product {itemDto.ProductId} must be greater than zero.");
 
-                // STRICT STOCK CHECK: Verify available stock before processing
-                if (product.StockQuantity < itemDto.Quantity)
+                if (!productMap.TryGetValue(itemDto.ProductId, out var product))
+                {
+                    product = await _productRepository.GetByIdAsync(itemDto.ProductId);
+                    if (product == null)
+                        return ApiResponse<SaleResponseDto>.Fail($"Product with ID '{itemDto.ProductId}' was not found.");
+                    productMap[itemDto.ProductId] = product;
+                }
+
+                var aggregateQty = requestedQtyByProduct.GetValueOrDefault(itemDto.ProductId, 0) + itemDto.Quantity;
+                requestedQtyByProduct[itemDto.ProductId] = aggregateQty;
+
+                // STRICT STOCK CHECK: Verify aggregated available stock before processing
+                if (product.StockQuantity < aggregateQty)
                 {
                     return ApiResponse<SaleResponseDto>.Fail(
-                        $"Insufficient stock for '{product.Name}'. Available inventory: {product.StockQuantity} units, Requested: {itemDto.Quantity} units."
+                        $"Insufficient stock for '{product.Name}'. Available inventory: {product.StockQuantity} units, Total Requested: {aggregateQty} units."
                     );
                 }
 
-                // Server enforces catalog selling price unless valid custom price provided
-                var effectivePrice = itemDto.CustomSellingPrice.HasValue && itemDto.CustomSellingPrice.Value > 0
-                    ? itemDto.CustomSellingPrice.Value
-                    : product.SellingPrice;
+                var effectivePrice = itemDto.CustomSellingPrice ?? product.SellingPrice;
 
                 var lineTotal = effectivePrice * itemDto.Quantity;
                 var lineCostBasis = product.PurchasePrice * itemDto.Quantity;
@@ -98,7 +115,7 @@ namespace InventoryManagementSystem.Api.Services
                     Sku = product.Sku,
                     Quantity = itemDto.Quantity,
                     SellingPrice = effectivePrice,
-                    CostPriceAtSale = product.PurchasePrice, // Saved cost basis for profit reports!
+                    CostPriceAtSale = product.PurchasePrice, // Saved cost basis for profit reports
                     Total = lineTotal
                 });
 
@@ -109,12 +126,10 @@ namespace InventoryManagementSystem.Api.Services
             var taxRate = Math.Clamp(dto.TaxRate, 0m, 28m);
             var taxAmount = Math.Round((subtotal * taxRate) / 100m, 2);
             var discount = Math.Max(0m, dto.Discount);
+            if (discount > subtotal + taxAmount)
+                return ApiResponse<SaleResponseDto>.Fail("Discount cannot exceed the sales invoice total.");
             var grandTotal = Math.Max(0m, subtotal + taxAmount - discount);
             var grossProfit = Math.Max(0m, subtotal - discount - totalCostBasis);
-
-            var invoiceNumber = string.IsNullOrWhiteSpace(dto.InvoiceNumber)
-                ? $"INV-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}"
-                : dto.InvoiceNumber.Trim();
 
             var sale = new Sale
             {
@@ -130,11 +145,13 @@ namespace InventoryManagementSystem.Api.Services
                 Discount = discount,
                 GrandTotal = grandTotal,
                 GrossProfit = grossProfit,
-                PaymentMethod = string.IsNullOrWhiteSpace(dto.PaymentMethod) ? "UPI" : dto.PaymentMethod,
+                PaymentMethod = string.IsNullOrWhiteSpace(dto.PaymentMethod) ? "UPI" : dto.PaymentMethod.Trim(),
                 Status = "Completed",
                 Notes = dto.Notes?.Trim() ?? string.Empty,
                 CreatedAt = DateTime.UtcNow
             };
+
+            var runningStock = productMap.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.StockQuantity);
 
             // 2. Concurrency-safe atomic stock decrement
             var session = await _context.StartSessionAsync();
@@ -157,8 +174,9 @@ namespace InventoryManagementSystem.Api.Services
                             throw new InvalidOperationException($"Concurrency conflict: Stock for '{prod.Name}' was modified concurrently or became insufficient.");
                         }
 
-                        var previousStock = prod.StockQuantity;
+                        var previousStock = runningStock[prod.Id];
                         var newStock = previousStock - item.Quantity;
+                        runningStock[prod.Id] = newStock;
 
                         await _stockTransactionRepository.CreateAsync(new StockTransaction
                         {
@@ -200,7 +218,6 @@ namespace InventoryManagementSystem.Api.Services
                     var success = await _productRepository.UpdateStockAtomicAsync(item.ProductId, -item.Quantity);
                     if (!success)
                     {
-                        // Rollback already decremented products
                         foreach (var dec in decrementedProducts)
                         {
                             await _productRepository.UpdateStockAtomicAsync(dec.ProductId, dec.Qty);
@@ -210,14 +227,15 @@ namespace InventoryManagementSystem.Api.Services
                     decrementedProducts.Add((item.ProductId, item.Quantity));
                 }
 
-                // If all atomic decrements succeeded, write the sale record and transactions
                 await _saleRepository.CreateAsync(sale);
 
                 for (int i = 0; i < validatedItems.Count; i++)
                 {
                     var item = validatedItems[i];
                     var prod = productList[i];
-                    var prevStock = prod.StockQuantity;
+                    var prevStock = runningStock[prod.Id];
+                    var newStock = prevStock - item.Quantity;
+                    runningStock[prod.Id] = newStock;
 
                     await _stockTransactionRepository.CreateAsync(new StockTransaction
                     {
@@ -227,7 +245,7 @@ namespace InventoryManagementSystem.Api.Services
                         Type = "SALE",
                         Quantity = -item.Quantity,
                         PreviousStock = prevStock,
-                        NewStock = prevStock - item.Quantity,
+                        NewStock = newStock,
                         ReferenceId = invoiceNumber,
                         Notes = $"Customer sale invoice to {sale.CustomerName}",
                         Timestamp = DateTime.UtcNow

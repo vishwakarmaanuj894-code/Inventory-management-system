@@ -8,6 +8,7 @@ namespace InventoryManagementSystem.Api.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class PurchasesController : ControllerBase
     {
         private readonly IPurchaseService _purchaseService;
@@ -18,13 +19,19 @@ namespace InventoryManagementSystem.Api.Controllers
         }
 
         /// <summary>
-        /// Get all purchase invoices in reverse chronological order.
+        /// Get all purchase invoices in reverse chronological order, optionally filtered by supplierId.
         /// </summary>
         [HttpGet]
         [ProducesResponseType(typeof(ApiResponse<List<PurchaseResponseDto>>), StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetAll()
+        [ProducesResponseType(typeof(ApiResponse<List<PurchaseResponseDto>>), StatusCodes.Status400BadRequest)]
+        public async Task<IActionResult> GetAll([FromQuery] string? supplierId = null)
         {
-            var result = await _purchaseService.GetAllAsync();
+            if (!string.IsNullOrWhiteSpace(supplierId) && !ObjectId.TryParse(supplierId, out _))
+            {
+                return BadRequest(ApiResponse<List<PurchaseResponseDto>>.Fail($"Invalid Supplier MongoDB ObjectId format: '{supplierId}'."));
+            }
+
+            var result = await _purchaseService.GetAllAsync(supplierId);
             return Ok(result);
         }
 
@@ -58,6 +65,7 @@ namespace InventoryManagementSystem.Api.Controllers
         [Authorize(Roles = "Administrator,InventoryManager")]
         [ProducesResponseType(typeof(ApiResponse<PurchaseResponseDto>), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ApiResponse<PurchaseResponseDto>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<PurchaseResponseDto>), StatusCodes.Status409Conflict)]
         public async Task<IActionResult> Create([FromBody] PurchaseCreateDto dto)
         {
             if (!ModelState.IsValid)
@@ -82,6 +90,9 @@ namespace InventoryManagementSystem.Api.Controllers
             var result = await _purchaseService.CreateAsync(dto);
             if (!result.Success)
             {
+                if (result.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+                    return Conflict(result);
+
                 return BadRequest(result);
             }
 

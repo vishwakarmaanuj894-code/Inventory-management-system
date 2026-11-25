@@ -8,6 +8,7 @@ namespace InventoryManagementSystem.Api.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize]
     public class SalesController : ControllerBase
     {
         private readonly ISaleService _saleService;
@@ -58,6 +59,7 @@ namespace InventoryManagementSystem.Api.Controllers
         [Authorize(Roles = "Administrator,InventoryManager,SalesExecutive")]
         [ProducesResponseType(typeof(ApiResponse<SaleResponseDto>), StatusCodes.Status201Created)]
         [ProducesResponseType(typeof(ApiResponse<SaleResponseDto>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<SaleResponseDto>), StatusCodes.Status409Conflict)]
         public async Task<IActionResult> Create([FromBody] SaleCreateDto dto)
         {
             if (!ModelState.IsValid)
@@ -77,6 +79,9 @@ namespace InventoryManagementSystem.Api.Controllers
             var result = await _saleService.CreateAsync(dto);
             if (!result.Success)
             {
+                if (result.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+                    return Conflict(result);
+
                 return BadRequest(result);
             }
 

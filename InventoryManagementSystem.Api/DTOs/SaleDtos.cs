@@ -11,8 +11,9 @@ namespace InventoryManagementSystem.Api.DTOs
         public int Quantity { get; set; }
 
         /// <summary>
-        /// Optional client selling price; server validates and defaults to product catalog price if null or modified.
+        /// Optional client selling price; server validates and defaults to product catalog price if null.
         /// </summary>
+        [Range(0.01, 10000000, ErrorMessage = "Custom selling price must be greater than zero")]
         public decimal? CustomSellingPrice { get; set; }
     }
 
